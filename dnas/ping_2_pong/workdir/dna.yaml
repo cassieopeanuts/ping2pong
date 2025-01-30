@@ -1,0 +1,21 @@
+manifest_version: '1'
+name: ping_2_pong
+integrity:
+  network_seed: null
+  properties: null
+  origin_time: 1738223185381309
+  zomes:
+  - name: ping_2_pong_integrity
+    hash: null
+    bundled: '../../../target/wasm32-unknown-unknown/release/ping_2_pong_integrity.wasm'
+    dependencies: null
+    dylib: null
+coordinator:
+  zomes:
+  - name: ping_2_pong
+    hash: null
+    bundled: '../../../target/wasm32-unknown-unknown/release/ping_2_pong.wasm'
+    dependencies:
+    - name: ping_2_pong_integrity
+    dylib: null
+lineage: []
