@@ -20,12 +20,12 @@ pub fn create_player(player: Player) -> ExternResult<Record> {
 
     // Create a link from player_name to player entry for quick lookup
     create_link(
-        player.player_name.to_lowercase().into(),
+        ping_2_pong_integrity::anchor_for(&player.player_name.to_lowercase())?,
         player_hash.clone(),
         LinkTypes::PlayerNameToPlayer,
         (),
     )?;
-
+    
     let record = get(player_hash.clone(), GetOptions::default())?.ok_or(wasm_error!(
         WasmErrorInner::Guest("Could not find the newly created Player".to_string())
     ))?;

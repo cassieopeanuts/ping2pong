@@ -1,7 +1,11 @@
 use hdi::prelude::*;
+use hdk::prelude::{
+    get, get_links, GetLinksInputBuilder, GetOptions, AnyLinkableHash
+};
 
-#[macro_use]
-extern crate log;
+use log::info;
+
+use crate::LinkTypes;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(tag = "type")]
@@ -14,7 +18,7 @@ pub enum GameStatus {
 #[derive(Clone, PartialEq)]
 #[hdk_entry_helper]
 pub struct Game {
-    pub game_id: String,
+    pub game_id: ActionHash,
     pub player_1: AgentPubKey,
     pub player_2: AgentPubKey,
     pub created_at: Timestamp,
@@ -22,15 +26,14 @@ pub struct Game {
 }
 
 // Helper function to get game hash
-fn get_game_hash_by_id(game_id: &str) -> ExternResult<Option<ActionHash>> {
-    // Fetch links from game_id to Game entries
+pub fn get_game_hash_by_id(game_id: &ActionHash) -> ExternResult<Option<ActionHash>> {
+    // Use the game_id (an ActionHash) as the base of the link
     let links = get_links(
-        GetLinksInputBuilder::try_new(game_id.to_lowercase().into(), LinkTypes::GameIdToGame)?.build(),
+        GetLinksInputBuilder::try_new(game_id.clone(), LinkTypes::GameIdToGame)?
+            .build(),
     )?;
-
-    // If a link exists, return the ActionHash
     if let Some(link) = links.first() {
-        let game_hash = link.target.into_action_hash().ok_or(
+        let game_hash = link.target.clone().into_action_hash().ok_or(
             wasm_error!(WasmErrorInner::Guest("Invalid game hash".to_string())),
         )?;
         Ok(Some(game_hash))
@@ -42,7 +45,7 @@ fn get_game_hash_by_id(game_id: &str) -> ExternResult<Option<ActionHash>> {
 // Helper function to check if a player exists
 fn player_exists(agent_pub_key: &AgentPubKey) -> ExternResult<bool> {
     let links = get_links(
-        GetLinksInputBuilder::try_new(*agent_pub_key, LinkTypes::PlayerToPlayers)?.build(),
+        GetLinksInputBuilder::try_new(agent_pub_key.clone(), LinkTypes::PlayerToPlayers)?.build(),
     )?;
     Ok(!links.is_empty())
 }
@@ -51,7 +54,7 @@ fn player_exists(agent_pub_key: &AgentPubKey) -> ExternResult<bool> {
 fn is_player_in_ongoing_game(player_pub_key: &AgentPubKey) -> ExternResult<bool> {
     // Fetch all games where the player is player_1
     let player1_games = get_links(
-        GetLinksInputBuilder::try_new(*player_pub_key, LinkTypes::Player1ToGames)?.build(),
+        GetLinksInputBuilder::try_new(player_pub_key.clone(), LinkTypes::Player1ToGames)?.build(),
     )?;
     
     for link in player1_games {
@@ -64,8 +67,8 @@ fn is_player_in_ongoing_game(player_pub_key: &AgentPubKey) -> ExternResult<bool>
             )))?;
         if let Some(game) = game_record
             .entry()
-            .to_app_option::<Game>()?
-        {
+            .to_app_option::<Game>().map_err(|e| wasm_error!(WasmErrorInner::Serialize(e)))?
+            {
             if game.game_status == GameStatus::InProgress {
                 return Ok(true);
             }
@@ -74,7 +77,7 @@ fn is_player_in_ongoing_game(player_pub_key: &AgentPubKey) -> ExternResult<bool>
 
     // Fetch all games where the player is player_2
     let player2_games = get_links(
-        GetLinksInputBuilder::try_new(*player_pub_key, LinkTypes::Player2ToGames)?.build(),
+        GetLinksInputBuilder::try_new(player_pub_key.clone(), LinkTypes::Player2ToGames)?.build(),
     )?;
     
     for link in player2_games {
@@ -87,7 +90,7 @@ fn is_player_in_ongoing_game(player_pub_key: &AgentPubKey) -> ExternResult<bool>
             )))?;
         if let Some(game) = game_record
             .entry()
-            .to_app_option::<Game>()?
+            .to_app_option::<Game>().map_err(|e| wasm_error!(WasmErrorInner::Serialize(e)))?
         {
             if game.game_status == GameStatus::InProgress {
                 return Ok(true);
@@ -103,27 +106,25 @@ pub fn validate_create_game(
     action: EntryCreationAction,
     game: Game,
 ) -> ExternResult<ValidateCallbackResult> {
-        // Log the creation attempt
-        info!(
-            "Validating creation of game with ID: {} by agent: {:?}",
-            game.game_id, action.author
-        );
+    info!(
+        "Validating creation of game with ID: {:?} by agent: {:?}",
+        game.game_id,  // now an ActionHash
+        action.author()
+    );
 
-    // Ensure unique game_id
+    // Use the game_id (an ActionHash) as the anchor to check for existing games.
     let existing_games = get_links(
-        GetLinksInputBuilder::try_new((), LinkTypes::GameUpdates)?.build(),
+        GetLinksInputBuilder::try_new(game.game_id.clone(), LinkTypes::GameUpdates)?
+            .build(),
     )?;
     for link in existing_games {
         let existing_game_hash = link.target.into_action_hash().ok_or(
             wasm_error!(WasmErrorInner::Guest("Invalid game hash".to_string())),
         )?;
         let existing_game_record = get(existing_game_hash, GetOptions::default())?
-            .ok_or(wasm_error!(WasmErrorInner::Guest(
-                "Game record not found".to_string()
-            )))?;
-        if let Some(existing_game) = existing_game_record
-            .entry()
-            .to_app_option::<Game>()?
+            .ok_or(wasm_error!(WasmErrorInner::Guest("Game record not found".to_string())))?;
+        if let Some(existing_game) = existing_game_record.entry().to_app_option::<Game>()
+            .map_err(|e| wasm_error!(WasmErrorInner::Serialize(e)))? 
         {
             if existing_game.game_id == game.game_id {
                 return Ok(ValidateCallbackResult::Invalid(
@@ -181,7 +182,7 @@ pub fn validate_create_game(
 pub fn validate_update_game(
     action: Update,
     updated_game: Game,
-    original_action: EntryCreationAction,
+    _original_action: EntryCreationAction,
     original_game: Game,
 ) -> ExternResult<ValidateCallbackResult> {
     // Only player_1 or player_2 can update the game
@@ -221,7 +222,7 @@ pub fn validate_update_game(
 
 pub fn validate_delete_game(
     action: Delete,
-    original_action: EntryCreationAction,
+    _original_action: EntryCreationAction,
     original_game: Game,
 ) -> ExternResult<ValidateCallbackResult> {
     // Only player_1 or player_2 can delete the game
@@ -362,4 +363,27 @@ pub fn validate_delete_link_game_updates(
     Ok(ValidateCallbackResult::Invalid(
         "GameUpdates links cannot be deleted".to_string(),
     ))
+}
+
+// Stub for validating creation of a GameIdToGame link.
+pub fn validate_create_link_game_id_to_game(
+    _action: CreateLink,
+    _base_address: AnyLinkableHash,
+    _target_address: AnyLinkableHash,
+    _tag: LinkTag,
+) -> ExternResult<ValidateCallbackResult> {
+    // TODO: Implement detailed validation.
+    Ok(ValidateCallbackResult::Valid)
+}
+
+// Stub for validating deletion of a GameIdToGame link.
+pub fn validate_delete_link_game_id_to_game(
+    _action: DeleteLink,
+    _original_action: CreateLink,
+    _base: AnyLinkableHash,
+    _target: AnyLinkableHash,
+    _tag: LinkTag,
+) -> ExternResult<ValidateCallbackResult> {
+    // TODO: Implement detailed validation.
+    Ok(ValidateCallbackResult::Valid)
 }

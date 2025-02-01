@@ -1,15 +1,20 @@
 use hdi::prelude::*;
+use hdk::prelude::{
+    get, get_links, GetLinksInputBuilder, GetOptions
+};
+
+use crate::{Game, GameStatus, LinkTypes};
 
 #[derive(Clone, PartialEq)]
 #[hdk_entry_helper]
 pub struct Score {
-    pub game_id: String,
+    pub game_id: ActionHash,
     pub player: AgentPubKey,
     pub player_points: u32,
 }
 
 pub fn validate_create_score(
-    action: EntryCreationAction,
+    _action: EntryCreationAction,
     score: Score,
 ) -> ExternResult<ValidateCallbackResult> {
     // Ensure the game_id exists and retrieve its ActionHash
@@ -27,7 +32,8 @@ pub fn validate_create_score(
         .ok_or(wasm_error!(WasmErrorInner::Guest("Game record not found".into())))?;
     let game = game_record
         .entry()
-        .to_app_option::<Game>()?
+        .to_app_option::<Game>()
+        .map_err(|e| wasm_error!(WasmErrorInner::Serialize(e)))?
         .ok_or(wasm_error!(WasmErrorInner::Guest("Invalid Game entry".into())))?;
 
     // Ensure the game is InProgress or Finished
@@ -53,27 +59,31 @@ pub fn validate_create_score(
     Ok(ValidateCallbackResult::Valid)
 }
 
+const MAX_POINTS: u32 = 10000; // in milliseconds
+
 // Helper function to get game hash by game_id
-fn get_game_hash_by_id(game_id: &str) -> ExternResult<Option<ActionHash>> {
-    // Fetch all games and find the one with matching game_id
+fn get_game_hash_by_id(game_id: &ActionHash) -> ExternResult<Option<ActionHash>> {
+    // Fetch all games using an appropriate anchor rather than `()`.
+    // For example, use an anchor such as:
+    let anchor = crate::utils::anchor_for("game_updates")?;
     let game_links = get_links(
-        GetLinksInputBuilder::try_new((), LinkTypes::GameUpdates)?.build(),
+        GetLinksInputBuilder::try_new(anchor, LinkTypes::GameUpdates)?.build(),
     )?;
 
     for link in game_links {
         let game_hash = link.target.into_action_hash().ok_or(
             wasm_error!(WasmErrorInner::Guest("Invalid game hash".to_string())),
         )?;
-        let game_record = get(game_hash, GetOptions::default())?
-            .ok_or(wasm_error!(WasmErrorInner::Guest(
-                "Game record not found".to_string()
-            )))?;
+        let game_record = get(game_hash.clone(), GetOptions::default())?
+            .ok_or(wasm_error!(WasmErrorInner::Guest("Game record not found".to_string())))?;
         if let Some(game) = game_record
             .entry()
-            .to_app_option::<Game>()?
+            .to_app_option::<Game>()
+            .map_err(|e| wasm_error!(WasmErrorInner::Serialize(e)))?
         {
-            if game.game_id == game_id {
-                return Ok(Some(game_hash));
+            // Compare the stored game_id with the one passed in.
+            if game.game_id == *game_id {
+                return Ok(Some(game_hash.clone()));
             }
         }
     }
@@ -182,4 +192,27 @@ pub fn validate_delete_link_score_updates(
     Ok(ValidateCallbackResult::Invalid(
         "ScoreUpdates links cannot be deleted".to_string(),
     ))
+}
+
+// Stub for validating creation of a ScoreToPlayer link.
+pub fn validate_create_link_score_to_player(
+    _action: CreateLink,
+    _base_address: AnyLinkableHash,
+    _target_address: AnyLinkableHash,
+    _tag: LinkTag,
+) -> ExternResult<ValidateCallbackResult> {
+    // TODO: Implement detailed validation.
+    Ok(ValidateCallbackResult::Valid)
+}
+
+// Stub for validating deletion of a ScoreToPlayer link.
+pub fn validate_delete_link_score_to_player(
+    _action: DeleteLink,
+    _original_action: CreateLink,
+    _base: AnyLinkableHash,
+    _target: AnyLinkableHash,
+    _tag: LinkTag,
+) -> ExternResult<ValidateCallbackResult> {
+    // TODO: Implement detailed validation.
+    Ok(ValidateCallbackResult::Valid)
 }

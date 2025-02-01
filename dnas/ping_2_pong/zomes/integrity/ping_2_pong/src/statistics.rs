@@ -1,9 +1,14 @@
 use hdi::prelude::*;
+use hdk::prelude::{
+    get, GetOptions
+};
+
+use crate::{Game, GameStatus, get_game_hash_by_id};
 
 #[derive(Clone, PartialEq)]
 #[hdk_entry_helper]
 pub struct Statistics {
-    pub game_id: String,
+    pub game_id: ActionHash,
     pub signal_latency: u32,
     pub score_validation_time: u32,
     pub dht_response_time: u32,
@@ -12,7 +17,7 @@ pub struct Statistics {
 }
 
 pub fn validate_create_statistics(
-    action: EntryCreationAction,
+    _action: EntryCreationAction,
     statistics: Statistics,
 ) -> ExternResult<ValidateCallbackResult> {
     // Ensure the game_id exists
@@ -30,7 +35,7 @@ pub fn validate_create_statistics(
 
     let game = game_record
         .entry()
-        .to_app_option::<Game>()?
+        .to_app_option::<Game>().map_err(|e| wasm_error!(WasmErrorInner::Serialize(e)))?
         .ok_or(wasm_error!(WasmErrorInner::Guest("Invalid game entry".into())))?;
 
     // Ensure game is Finished

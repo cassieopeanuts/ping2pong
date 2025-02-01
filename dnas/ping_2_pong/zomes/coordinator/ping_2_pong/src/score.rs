@@ -3,16 +3,10 @@ use ping_2_pong_integrity::*;
 
 #[hdk_extern]
 pub fn create_score(score: Score) -> ExternResult<Record> {
-    // Perform validations
-    let validation_result = validate_create_score(EntryCreationAction::Create(action.clone()), score.clone())?;
-    if validation_result != ValidateCallbackResult::Valid {
-        return Ok(validation_result);
-    }
-
-    // Create the Score entry
+    // Rely on the integrity zome’s automatic validation when committing the entry.
     let score_hash = create_entry(&EntryTypes::Score(score.clone()))?;
 
-    // Link the Score to the Player
+    // Link the Score to the Player.
     create_link(
         score.player.clone(),
         score_hash.clone(),
@@ -20,20 +14,18 @@ pub fn create_score(score: Score) -> ExternResult<Record> {
         (),
     )?;
 
-    // Link the Score to the original game (optional, based on your data model)
+    // Link the Score to the original game (assuming score.game_id is convertible via your anchor helper)
     create_link(
-        score.game_id.clone().into(),
+        score.game_id.clone(), // or use: ping_2_pong_integrity::anchor_for(&score.game_id_string)? if needed
         score_hash.clone(),
         LinkTypes::ScoreUpdates,
         (),
     )?;
 
-    // Emit a signal or perform additional actions as needed
-
-    // Retrieve and return the created Score record
-    let record = get(score_hash.clone(), GetOptions::default())?.ok_or(wasm_error!(
-        WasmErrorInner::Guest("Could not find the newly created Score".to_string())
-    ))?;
+    // Retrieve and return the created Score record.
+    let record = get(score_hash.clone(), GetOptions::default())?.ok_or(
+        wasm_error!(WasmErrorInner::Guest("Could not find the newly created Score".to_string()))
+    )?;
     Ok(record)
 }
 

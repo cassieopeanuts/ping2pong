@@ -3,13 +3,7 @@ use ping_2_pong_integrity::*;
 
 #[hdk_extern]
 pub fn create_game(game: Game) -> ExternResult<Record> {
-    // Perform validations (as previously implemented)
-    let validation_result = validate_create_game(EntryCreationAction::Create(action.clone()), game.clone())?;
-    if validation_result != ValidateCallbackResult::Valid {
-        return Ok(validation_result);
-    }
-
-    // Create the Game entry
+    // Create the Game entry. The integrity zome's validation callback will run automatically.
     let game_hash = create_entry(&EntryTypes::Game(game.clone()))?;
 
     // Link player_1 to the Game
@@ -30,13 +24,11 @@ pub fn create_game(game: Game) -> ExternResult<Record> {
 
     // Create a link from game_id to the Game entry for efficient lookup
     create_link(
-        game.game_id.clone().into(), // Convert String to AnyLinkableHash
+        game.game_id.clone(), // Convert String (or ActionHash) as needed
         game_hash.clone(),
         LinkTypes::GameIdToGame,
         (),
     )?;
-
-    // Emit a signal or perform additional actions as needed
 
     // Retrieve and return the created Game record
     let record = get(game_hash.clone(), GetOptions::default())?.ok_or(wasm_error!(
