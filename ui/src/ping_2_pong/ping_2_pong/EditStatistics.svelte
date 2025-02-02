@@ -1,3 +1,6 @@
+// This element was auto created by Holochain scaffolding tool and we dont really need it
+// We keep it for archive purpose
+
 <script lang="ts">
 import type { ActionHash, AgentPubKey, AppClient, DnaHash, EntryHash, HolochainError, Record } from "@holochain/client";
 import { decode } from "@msgpack/msgpack";

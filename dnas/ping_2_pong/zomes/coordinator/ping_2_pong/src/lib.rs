@@ -5,6 +5,7 @@ pub mod statistics;
 use hdk::prelude::*;
 use ping_2_pong_integrity::*;
 
+
 // Called the first time a zome call is made to the cell containing this zome
 #[hdk_extern]
 pub fn init() -> ExternResult<InitCallbackResult> {
@@ -37,7 +38,18 @@ pub enum Signal {
         action: SignedActionHashed,
         original_app_entry: EntryTypes,
     },
+
+        // New variant for real-time game updates:
+        GameUpdate {
+            game_id: ActionHash,        
+            paddle1: u32,            // e.g. Y position for player 1's paddle
+            paddle2: u32,            // Y position for player 2's paddle
+            ball_x: u32,
+            ball_y: u32,
+        },
+
 }
+
 
 // Whenever an action is committed, we emit a signal to the UI elements to reactively update them
 #[hdk_extern(infallible)]

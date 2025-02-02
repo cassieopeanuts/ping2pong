@@ -1,4 +1,4 @@
-import { type AppClient } from "@holochain/client";
+import type { AppClient } from "@holochain/client";
 
 export const clientContext = "AppClient";
 

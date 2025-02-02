@@ -15,6 +15,7 @@ pub enum GameStatus {
     Finished,
 }
 
+
 #[derive(Clone, PartialEq)]
 #[hdk_entry_helper]
 pub struct Game {
@@ -23,6 +24,11 @@ pub struct Game {
     pub player_2: AgentPubKey,
     pub created_at: Timestamp,
     pub game_status: GameStatus,
+    pub player_1_paddle: u32,
+    pub player_2_paddle: u32,
+    pub ball_x: u32,
+    pub ball_y: u32,
+
 }
 
 // Helper function to get game hash

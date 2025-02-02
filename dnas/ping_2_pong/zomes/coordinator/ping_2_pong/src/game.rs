@@ -1,6 +1,8 @@
 use hdk::prelude::*;
 use ping_2_pong_integrity::*;
 
+use crate::Signal;
+
 #[hdk_extern]
 pub fn create_game(game: Game) -> ExternResult<Record> {
     // Create the Game entry. The integrity zome's validation callback will run automatically.
@@ -27,6 +29,14 @@ pub fn create_game(game: Game) -> ExternResult<Record> {
         game.game_id.clone(), // Convert String (or ActionHash) as needed
         game_hash.clone(),
         LinkTypes::GameIdToGame,
+        (),
+    )?;
+
+    let games_anchor = anchor_for("games")?;
+    create_link(
+        games_anchor,
+        game_hash.clone(),
+        LinkTypes::GameIdToGame, 
         (),
     )?;
 
@@ -236,4 +246,60 @@ pub fn get_deleted_games_for_player_2(
         .into_iter()
         .filter(|(_link, deletes)| !deletes.is_empty())
         .collect())
+}
+
+//Actual game logic and signaling here
+#[hdk_extern]
+pub fn update_paddle_position(input: PaddleUpdateInput) -> ExternResult<Record> {
+    let current_record = get(input.previous_game_hash.clone(), GetOptions::default())?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("Game record not found".to_string())))?;
+    
+        let mut current_game: Game = current_record.entry()
+        .to_app_option().map_err(|e| wasm_error!(WasmErrorInner::Guest(format!("SerializedBytesError: {:?}", e))))?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("Malformed game record".to_string())))?;
+    
+    // Update only the fields we care about.
+    current_game.player_1_paddle = input.updated_game.player_1_paddle;
+    current_game.player_2_paddle = input.updated_game.player_2_paddle;
+    current_game.ball_x = input.updated_game.ball_x;
+    current_game.ball_y = input.updated_game.ball_y;
+    
+    let updated_game_hash = update_entry(input.previous_game_hash, &current_game)?;
+    
+    create_link(
+        input.original_game_hash,
+        updated_game_hash.clone(),
+        LinkTypes::GameUpdates,
+        (),
+    )?;
+    
+    // Emit the signal with the updated positions.
+    let signal = Signal::GameUpdate {
+        game_id: current_game.game_id.clone(),
+        paddle1: current_game.player_1_paddle,
+        paddle2: current_game.player_2_paddle,
+        ball_x: current_game.ball_x,
+        ball_y: current_game.ball_y,
+    };
+    emit_signal(signal)?;
+    
+    let record = get(updated_game_hash, GetOptions::default())?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("Could not find the updated game".to_string())))?;
+    Ok(record)
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct PaddleUpdateInput {
+    pub original_game_hash: ActionHash,
+    pub previous_game_hash: ActionHash,
+    pub updated_game: GameUpdateData,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct GameUpdateData {
+    pub game_id: ActionHash,
+    pub player_1_paddle: u32,
+    pub player_2_paddle: u32,
+    pub ball_x: u32,
+    pub ball_y: u32,
 }

@@ -2,7 +2,7 @@
 import type { ActionHash, AgentPubKey, AppClient, DnaHash, EntryHash, HolochainError, Record } from "@holochain/client";
 import { createEventDispatcher, getContext, onMount } from "svelte";
 import { type ClientContext, clientContext } from "../../contexts";
-import type { Game, GameStatus } from "./types";
+import type { Game, GameStatus } from "../ping_2_pong/types";
 
 const dispatch = createEventDispatcher();
 let client: AppClient;
@@ -63,7 +63,7 @@ async function createGame() {
 
   <div>
     <label for="Game Status">Game Status:</label>
-    <select name="Game Status" bind:value={gameStatus?.type}>
+    <select name="Game Status" bind:value={gameStatus.type}>
       <option value="Waiting">Waiting</option>
       <option value="InProgress">In Progress</option>
       <option value="Finished">Finished</option>
