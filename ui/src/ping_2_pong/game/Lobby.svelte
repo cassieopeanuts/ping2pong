@@ -23,9 +23,9 @@
     // Helper function to extract game_id from a Record
     function getGameId(record: Record): string {
       const entry = (record.entry as any)?.Present?.entry as Game;
-      return entry ? entry.game_id : "Unknown";
+      return entry ? entry.game_id.toString() : "Unknown";
     }
-    
+      
     async function fetchAvailableGames() {
       loading = true;
       error = null;

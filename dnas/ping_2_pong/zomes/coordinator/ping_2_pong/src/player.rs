@@ -1,6 +1,38 @@
 use hdk::prelude::*;
 use ping_2_pong_integrity::*;
 
+
+// Helper function to check if a player name is unique
+pub fn is_player_name_unique(player_name: &str) -> ExternResult<bool> {
+    // Use an anchor for all players rather than ().
+    let base = anchor_for("players")?;
+    let player_links = get_links(
+        GetLinksInputBuilder::try_new(base, LinkTypes::PlayerToPlayers)?.build(),
+    )?;
+    
+    for link in player_links {
+        let player_hash = link.target.into_action_hash().ok_or(
+            wasm_error!(WasmErrorInner::Guest("Invalid player hash".to_string())),
+        )?;
+        let player_record = get(player_hash, GetOptions::default())?
+            .ok_or(wasm_error!(WasmErrorInner::Guest(
+                "Player record not found".to_string()
+            )))?;
+        // IMPORTANT: Convert to Player (not Game)
+        if let Some(existing_player) = player_record
+            .entry()
+            .to_app_option::<Player>()
+            .map_err(|e| wasm_error!(WasmErrorInner::Serialize(e)))?
+        {
+            if existing_player.player_name.to_lowercase() == player_name.to_lowercase() {
+                return Ok(false);
+            }
+        }
+    }
+    
+    Ok(true)
+}
+
 #[hdk_extern]
 pub fn create_player(player: Player) -> ExternResult<Record> {
     // Check if player_name is unique

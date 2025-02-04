@@ -6,6 +6,7 @@ pub mod player;
 pub use player::*;
 pub mod game;
 pub use game::*;
+
 pub mod utils;
 pub use utils::*;
 
@@ -135,7 +136,7 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
                         };
                         validate_update_score(action, score, original_create_action, original_score)
                     }
-                    EntryTypes::Player(player) => {
+                    EntryTypes::Player(_player) => {
                         let original_app_entry =
                             must_get_valid_record(action.clone().original_action_address)?;
                         let original_player = match Player::try_from(original_app_entry) {
@@ -146,7 +147,7 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
                                 )));
                             }
                         };
-                        validate_update_player(action, player, original_create_action, original_player)
+                        validate_update_player(action, original_create_action, original_player)
                     }
                     EntryTypes::Game(game) => {
                         let original_app_entry =
@@ -235,10 +236,10 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
                 validate_create_link_game_updates(action, base_address, target_address, tag)
             }
             LinkTypes::PlayerToPlayers => {
-                validate_create_link_player_to_players(action, base_address, target_address, tag)
+                validate_create_link_player_to_players(action, base_address, tag)
             }
             LinkTypes::PlayerUpdates => {
-                validate_create_link_player_updates(action, base_address, target_address, tag)
+                validate_create_link_player_updates(action, tag)
             }
             LinkTypes::PlayerToScores => {
                 validate_create_link_player_to_scores(action, base_address, target_address, tag)
@@ -250,7 +251,7 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
                 validate_create_link_statistics_updates(action, base_address, target_address, tag)
             }
             LinkTypes::PlayerNameToPlayer => {
-                validate_create_link_player_name_to_player(action, base_address, target_address, tag)
+                validate_create_link_player_name_to_player(action, tag)
             }
             LinkTypes::GameIdToGame => {
                 // Stub function implemented in game.rs
@@ -383,7 +384,7 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
                                         ));
                                     }
                                 };
-                                validate_update_player(action, player, original_action, original_player)
+                                validate_update_player(action, original_action, original_player)
                             } else {
                                 Ok(result)
                             }

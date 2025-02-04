@@ -1,7 +1,76 @@
 use hdk::prelude::*;
 use ping_2_pong_integrity::*;
-
 use crate::Signal;
+
+// Helper function to get game hash
+pub fn get_game_hash_by_id(game_id: &ActionHash) -> ExternResult<Option<ActionHash>> {
+    // Use the game_id (an ActionHash) as the base of the link
+    let links = get_links(
+        GetLinksInputBuilder::try_new(game_id.clone(), LinkTypes::GameIdToGame)?
+            .build(),
+    )?;
+    if let Some(link) = links.first() {
+        let game_hash = link.target.clone().into_action_hash().ok_or(
+            wasm_error!(WasmErrorInner::Guest("Invalid game hash".to_string())),
+        )?;
+        Ok(Some(game_hash))
+    } else {
+        Ok(None)
+    }
+}
+
+// Helper function to check if a player exists
+fn player_exists(agent_pub_key: &AgentPubKey) -> ExternResult<bool> {
+    let links = get_links(
+        GetLinksInputBuilder::try_new(agent_pub_key.clone(), LinkTypes::PlayerToPlayers)?.build(),
+    )?;
+    Ok(!links.is_empty())
+}
+
+// Helper function to check if a player is already in an ongoing game
+fn is_player_in_ongoing_game(player_pub_key: &AgentPubKey) -> ExternResult<bool> {
+    // Fetch all games where the player is player_1
+    let player1_games = get_links(
+        GetLinksInputBuilder::try_new(player_pub_key.clone(), LinkTypes::Player1ToGames)?.build(),
+    )?;
+    for link in player1_games {
+        let game_hash = link.target.into_action_hash().ok_or(
+            wasm_error!(WasmErrorInner::Guest("Invalid game hash".to_string())),
+        )?;
+        let game_record = get(game_hash, GetOptions::default())?
+            .ok_or(wasm_error!(WasmErrorInner::Guest("Game record not found".to_string())))?;
+        if let Some(game) = game_record
+            .entry()
+            .to_app_option::<Game>()
+            .map_err(|e| wasm_error!(WasmErrorInner::Serialize(e)))?
+        {
+            if game.game_status == GameStatus::InProgress {
+                return Ok(true);
+            }
+        }
+    }
+    // Fetch all games where the player is player_2
+    let player2_games = get_links(
+        GetLinksInputBuilder::try_new(player_pub_key.clone(), LinkTypes::Player2ToGames)?.build(),
+    )?;
+    for link in player2_games {
+        let game_hash = link.target.into_action_hash().ok_or(
+            wasm_error!(WasmErrorInner::Guest("Invalid game hash".to_string())),
+        )?;
+        let game_record = get(game_hash, GetOptions::default())?
+            .ok_or(wasm_error!(WasmErrorInner::Guest("Game record not found".to_string())))?;
+        if let Some(game) = game_record
+            .entry()
+            .to_app_option::<Game>()
+            .map_err(|e| wasm_error!(WasmErrorInner::Serialize(e)))?
+        {
+            if game.game_status == GameStatus::InProgress {
+                return Ok(true);
+            }
+        }
+    }
+    Ok(false)
+}
 
 #[hdk_extern]
 pub fn create_game(game: Game) -> ExternResult<Record> {
@@ -26,7 +95,7 @@ pub fn create_game(game: Game) -> ExternResult<Record> {
 
     // Create a link from game_id to the Game entry for efficient lookup
     create_link(
-        game.game_id.clone(), // Convert String (or ActionHash) as needed
+        game.game_id.clone(), // game_id is an ActionHash; use as is
         game_hash.clone(),
         LinkTypes::GameIdToGame,
         (),
@@ -40,10 +109,62 @@ pub fn create_game(game: Game) -> ExternResult<Record> {
         (),
     )?;
 
-    // Retrieve and return the created Game record
-    let record = get(game_hash.clone(), GetOptions::default())?.ok_or(wasm_error!(
-        WasmErrorInner::Guest("Could not find the newly created Game".to_string())
-    ))?;
+    // Retrieve the created Game record
+    let record = get(game_hash.clone(), GetOptions::default())?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("Could not find the newly created Game".to_string())))?;
+
+    // --- Coordinator-level checks begin here ---
+    // Check for uniqueness of game_id using the GameUpdates link.
+    let existing_games = get_links(
+        GetLinksInputBuilder::try_new(game.game_id.clone(), LinkTypes::GameUpdates)?
+            .build(),
+    )?;
+    for link in existing_games {
+        let existing_game_hash = link.target.into_action_hash().ok_or(
+            wasm_error!(WasmErrorInner::Guest("Invalid game hash".to_string())),
+        )?;
+        let existing_game_record = get(existing_game_hash, GetOptions::default())?
+            .ok_or(wasm_error!(WasmErrorInner::Guest("Game record not found".to_string())))?;
+        if let Some(existing_game) = existing_game_record
+            .entry()
+            .to_app_option::<Game>()
+            .map_err(|e| wasm_error!(WasmErrorInner::Serialize(e)))?
+        {
+            if existing_game.game_id == game.game_id {
+                return Err(wasm_error!(WasmErrorInner::Guest("Game ID must be unique".into())));
+            }
+        }
+    }
+
+    // Ensure player_1 and player_2 are valid registered players.
+    if !player_exists(&game.player_1)? {
+        return Err(wasm_error!(WasmErrorInner::Guest("Player 1 is not a registered player".into())));
+    }
+    if !player_exists(&game.player_2)? {
+        return Err(wasm_error!(WasmErrorInner::Guest("Player 2 is not a registered player".into())));
+    }
+
+    // Ensure player_1 and player_2 are not the same.
+    if game.player_1 == game.player_2 {
+        return Err(wasm_error!(WasmErrorInner::Guest("Player 1 and Player 2 cannot be the same agent".into())));
+    }
+
+    // Ensure game_status is initially Waiting.
+    if game.game_status != GameStatus::Waiting {
+        return Err(wasm_error!(WasmErrorInner::Guest("Newly created games must have status 'Waiting'".into())));
+    }
+
+    // Ensure player_1 is not in another ongoing game.
+    if is_player_in_ongoing_game(&game.player_1)? {
+        return Err(wasm_error!(WasmErrorInner::Guest("Player 1 is already in an ongoing game".into())));
+    }
+
+    // Ensure player_2 is not in another ongoing game.
+    if is_player_in_ongoing_game(&game.player_2)? {
+        return Err(wasm_error!(WasmErrorInner::Guest("Player 2 is already in an ongoing game".into())));
+    }
+    // --- End of coordinator-level checks ---
+
     Ok(record)
 }
 
@@ -60,9 +181,7 @@ pub fn get_latest_game(original_game_hash: ActionHash) -> ExternResult<Option<Re
             link.target
                 .clone()
                 .into_action_hash()
-                .ok_or(wasm_error!(WasmErrorInner::Guest(
-                    "No action hash associated with link".to_string()
-                )))?
+                .ok_or(wasm_error!(WasmErrorInner::Guest("No action hash associated with link".to_string())))?
         }
         None => original_game_hash.clone(),
     };
@@ -76,9 +195,7 @@ pub fn get_original_game(original_game_hash: ActionHash) -> ExternResult<Option<
     };
     match details {
         Details::Record(details) => Ok(Some(details.record)),
-        _ => Err(wasm_error!(WasmErrorInner::Guest(
-            "Malformed get details response".to_string()
-        ))),
+        _ => Err(wasm_error!(WasmErrorInner::Guest("Malformed get details response".to_string()))),
     }
 }
 
@@ -96,9 +213,7 @@ pub fn get_all_revisions_for_game(original_game_hash: ActionHash) -> ExternResul
             Ok(GetInput::new(
                 link.target
                     .into_action_hash()
-                    .ok_or(wasm_error!(WasmErrorInner::Guest(
-                        "No action hash associated with link".to_string()
-                    )))?
+                    .ok_or(wasm_error!(WasmErrorInner::Guest("No action hash associated with link".to_string())))?
                     .into(),
                 GetOptions::default(),
             ))
@@ -139,16 +254,12 @@ pub fn delete_game(original_game_hash: ActionHash) -> ExternResult<ActionHash> {
     )?;
     let record = match details {
         Details::Record(details) => Ok(details.record),
-        _ => Err(wasm_error!(WasmErrorInner::Guest(
-            "Malformed get details response".to_string()
-        ))),
+        _ => Err(wasm_error!(WasmErrorInner::Guest("Malformed get details response".to_string()))),
     }?;
     let entry = record
         .entry()
         .as_option()
-        .ok_or(wasm_error!(WasmErrorInner::Guest(
-            "Game record has no entry".to_string()
-        )))?;
+        .ok_or(wasm_error!(WasmErrorInner::Guest("Game record has no entry".to_string())))?;
     let game = <Game>::try_from(entry)?;
     let links = get_links(
         GetLinksInputBuilder::try_new(game.player_1.clone(), LinkTypes::Player1ToGames)?.build(),
@@ -174,32 +285,23 @@ pub fn delete_game(original_game_hash: ActionHash) -> ExternResult<ActionHash> {
 }
 
 #[hdk_extern]
-pub fn get_all_deletes_for_game(
-    original_game_hash: ActionHash,
-) -> ExternResult<Option<Vec<SignedActionHashed>>> {
+pub fn get_all_deletes_for_game(original_game_hash: ActionHash) -> ExternResult<Option<Vec<SignedActionHashed>>> {
     let Some(details) = get_details(original_game_hash, GetOptions::default())? else {
         return Ok(None);
     };
     match details {
-        Details::Entry(_) => Err(wasm_error!(WasmErrorInner::Guest(
-            "Malformed details".into()
-        ))),
+        Details::Entry(_) => Err(wasm_error!(WasmErrorInner::Guest("Malformed details".into()))),
         Details::Record(record_details) => Ok(Some(record_details.deletes)),
     }
 }
 
 #[hdk_extern]
-pub fn get_oldest_delete_for_game(
-    original_game_hash: ActionHash,
-) -> ExternResult<Option<SignedActionHashed>> {
+pub fn get_oldest_delete_for_game(original_game_hash: ActionHash) -> ExternResult<Option<SignedActionHashed>> {
     let Some(mut deletes) = get_all_deletes_for_game(original_game_hash)? else {
         return Ok(None);
     };
     deletes.sort_by(|delete_a, delete_b| {
-        delete_a
-            .action()
-            .timestamp()
-            .cmp(&delete_b.action().timestamp())
+        delete_a.action().timestamp().cmp(&delete_b.action().timestamp())
     });
     Ok(deletes.first().cloned())
 }
@@ -219,11 +321,7 @@ pub fn get_deleted_games_for_player_1(
         None,
         GetOptions::default(),
     )?;
-    Ok(details
-        .into_inner()
-        .into_iter()
-        .filter(|(_link, deletes)| !deletes.is_empty())
-        .collect())
+    Ok(details.into_inner().into_iter().filter(|(_link, deletes)| !deletes.is_empty()).collect())
 }
 
 #[hdk_extern]
@@ -241,21 +339,18 @@ pub fn get_deleted_games_for_player_2(
         None,
         GetOptions::default(),
     )?;
-    Ok(details
-        .into_inner()
-        .into_iter()
-        .filter(|(_link, deletes)| !deletes.is_empty())
-        .collect())
+    Ok(details.into_inner().into_iter().filter(|(_link, deletes)| !deletes.is_empty()).collect())
 }
 
-//Actual game logic and signaling here
+// Actual game logic and signaling here
 #[hdk_extern]
 pub fn update_paddle_position(input: PaddleUpdateInput) -> ExternResult<Record> {
     let current_record = get(input.previous_game_hash.clone(), GetOptions::default())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("Game record not found".to_string())))?;
     
-        let mut current_game: Game = current_record.entry()
-        .to_app_option().map_err(|e| wasm_error!(WasmErrorInner::Guest(format!("SerializedBytesError: {:?}", e))))?
+    let mut current_game: Game = current_record.entry()
+        .to_app_option()
+        .map_err(|e| wasm_error!(WasmErrorInner::Guest(format!("SerializedBytesError: {:?}", e))))?
         .ok_or(wasm_error!(WasmErrorInner::Guest("Malformed game record".to_string())))?;
     
     // Update only the fields we care about.

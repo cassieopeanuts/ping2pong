@@ -1,66 +1,63 @@
 <script lang="ts">
-import type { ActionHash, AgentPubKey, AppClient, DnaHash, EntryHash, HolochainError, Record } from "@holochain/client";
-import { createEventDispatcher, getContext, onMount } from "svelte";
-import { type ClientContext, clientContext } from "../../contexts";
-import type { Game, GameStatus } from "../ping_2_pong/types";
+  import type { ActionHash, AgentPubKey, AppClient, HolochainError, Record } from "@holochain/client";
+  import { createEventDispatcher, getContext, onMount } from "svelte";
+  import { type ClientContext, clientContext } from "../../contexts";
+  import type { Game, GameStatus } from "../ping_2_pong/types";
 
-const dispatch = createEventDispatcher();
-let client: AppClient;
-const appClientContext = getContext<ClientContext>(clientContext);
+  const dispatch = createEventDispatcher();
+  let client: AppClient;
+  const appClientContext = getContext<ClientContext>(clientContext);
 
-let gameStatus: GameStatus = { type: "Waiting" };
+  // Generate a dummy game_id string (later converted in DNA to an ActionHash)
+  export let gameId: string = Date.now().toString();  
+  export let player1: AgentPubKey = "default_player1" as any;
+  export let player2: AgentPubKey = "default_player2" as any;
+  export let createdAt: number = Date.now();
 
-export let gameId!: string;
-export let player1!: AgentPubKey;
-export let player2!: AgentPubKey;
-export let createdAt!: number;
+  // Default game status.
+  let gameStatus: GameStatus = { type: "Waiting" };
 
-$: gameId, player1, player2, createdAt, gameStatus;
-$: isGameValid = true && true;
+  $: isGameValid = true;
 
-onMount(async () => {
-  if (gameId === undefined) {
-    throw new Error(`The gameId input is required for the CreateGame element`);
+  onMount(async () => {
+    if (!gameId) throw new Error("The gameId input is required for the CreateGame element");
+    if (!player1) throw new Error("The player1 input is required for the CreateGame element");
+    if (!player2) throw new Error("The player2 input is required for the CreateGame element");
+    if (!createdAt) throw new Error("The createdAt input is required for the CreateGame element");
+    client = await appClientContext.getClient();
+  });
+
+  async function createGame() {
+    // Build the game entry – note that game_id will be set by the DNA to an ActionHash.
+    const gameEntry: Game = {
+      game_id: gameId as unknown as ActionHash, // cast as needed
+      player_1: player1,
+      player_2: player2,
+      created_at: createdAt,
+      game_status: gameStatus,
+      player_1_paddle: 250,
+      player_2_paddle: 250,
+      ball_x: 400,
+      ball_y: 300,
+    };
+
+    try {
+      const record: Record = await client.callZome({
+        cap_secret: null,
+        role_name: "ping_2_pong",
+        zome_name: "ping_2_pong",
+        fn_name: "create_game",
+        payload: gameEntry,
+      });
+      dispatch("game-created", { gameHash: record.signed_action.hashed.hash });
+    } catch (e) {
+      alert((e as HolochainError).message);
+    }
   }
-  if (player1 === undefined) {
-    throw new Error(`The player1 input is required for the CreateGame element`);
-  }
-  if (player2 === undefined) {
-    throw new Error(`The player2 input is required for the CreateGame element`);
-  }
-  if (createdAt === undefined) {
-    throw new Error(`The createdAt input is required for the CreateGame element`);
-  }
-  client = await appClientContext.getClient();
-});
-
-async function createGame() {
-  const gameEntry: Game = {
-    game_id: gameId!,
-    player_1: player1!,
-    player_2: player2!,
-    created_at: createdAt!,
-    game_status: gameStatus!,
-  };
-
-  try {
-    const record: Record = await client.callZome({
-      cap_secret: null,
-      role_name: "ping_2_pong",
-      zome_name: "ping_2_pong",
-      fn_name: "create_game",
-      payload: gameEntry,
-    });
-    dispatch("game-created", { gameHash: record.signed_action.hashed.hash });
-  } catch (e) {
-    alert((e as HolochainError).message);
-  }
-}
 </script>
 
 <div>
   <h3>Create Game</h3>
-
   <div>
     <label for="Game Status">Game Status:</label>
     <select name="Game Status" bind:value={gameStatus.type}>
@@ -69,8 +66,7 @@ async function createGame() {
       <option value="Finished">Finished</option>
     </select>
   </div>
-
-  <button disabled={!isGameValid} on:click={() => createGame()}>
+  <button disabled={!isGameValid} on:click={createGame}>
     Create Game
   </button>
 </div>

@@ -1,11 +1,7 @@
 use hdi::prelude::*;
-use hdk::prelude::{
-    get, get_links, GetLinksInputBuilder, GetOptions, AnyLinkableHash
-};
+use hdk::prelude::*;
 
 use log::info;
-
-use crate::LinkTypes;
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
 #[serde(tag = "type")]
@@ -31,82 +27,6 @@ pub struct Game {
 
 }
 
-// Helper function to get game hash
-pub fn get_game_hash_by_id(game_id: &ActionHash) -> ExternResult<Option<ActionHash>> {
-    // Use the game_id (an ActionHash) as the base of the link
-    let links = get_links(
-        GetLinksInputBuilder::try_new(game_id.clone(), LinkTypes::GameIdToGame)?
-            .build(),
-    )?;
-    if let Some(link) = links.first() {
-        let game_hash = link.target.clone().into_action_hash().ok_or(
-            wasm_error!(WasmErrorInner::Guest("Invalid game hash".to_string())),
-        )?;
-        Ok(Some(game_hash))
-    } else {
-        Ok(None)
-    }
-}
-
-// Helper function to check if a player exists
-fn player_exists(agent_pub_key: &AgentPubKey) -> ExternResult<bool> {
-    let links = get_links(
-        GetLinksInputBuilder::try_new(agent_pub_key.clone(), LinkTypes::PlayerToPlayers)?.build(),
-    )?;
-    Ok(!links.is_empty())
-}
-
-// Helper function to chexk if player is already in an ongoing game
-fn is_player_in_ongoing_game(player_pub_key: &AgentPubKey) -> ExternResult<bool> {
-    // Fetch all games where the player is player_1
-    let player1_games = get_links(
-        GetLinksInputBuilder::try_new(player_pub_key.clone(), LinkTypes::Player1ToGames)?.build(),
-    )?;
-    
-    for link in player1_games {
-        let game_hash = link.target.into_action_hash().ok_or(
-            wasm_error!(WasmErrorInner::Guest("Invalid game hash".to_string())),
-        )?;
-        let game_record = get(game_hash, GetOptions::default())?
-            .ok_or(wasm_error!(WasmErrorInner::Guest(
-                "Game record not found".to_string()
-            )))?;
-        if let Some(game) = game_record
-            .entry()
-            .to_app_option::<Game>().map_err(|e| wasm_error!(WasmErrorInner::Serialize(e)))?
-            {
-            if game.game_status == GameStatus::InProgress {
-                return Ok(true);
-            }
-        }
-    }
-
-    // Fetch all games where the player is player_2
-    let player2_games = get_links(
-        GetLinksInputBuilder::try_new(player_pub_key.clone(), LinkTypes::Player2ToGames)?.build(),
-    )?;
-    
-    for link in player2_games {
-        let game_hash = link.target.into_action_hash().ok_or(
-            wasm_error!(WasmErrorInner::Guest("Invalid game hash".to_string())),
-        )?;
-        let game_record = get(game_hash, GetOptions::default())?
-            .ok_or(wasm_error!(WasmErrorInner::Guest(
-                "Game record not found".to_string()
-            )))?;
-        if let Some(game) = game_record
-            .entry()
-            .to_app_option::<Game>().map_err(|e| wasm_error!(WasmErrorInner::Serialize(e)))?
-        {
-            if game.game_status == GameStatus::InProgress {
-                return Ok(true);
-            }
-        }
-    }
-
-    Ok(false)
-}
-
 // Validate_create_game function
 pub fn validate_create_game(
     action: EntryCreationAction,
@@ -114,73 +34,9 @@ pub fn validate_create_game(
 ) -> ExternResult<ValidateCallbackResult> {
     info!(
         "Validating creation of game with ID: {:?} by agent: {:?}",
-        game.game_id,  // now an ActionHash
+        game.game_id,  
         action.author()
     );
-
-    // Use the game_id (an ActionHash) as the anchor to check for existing games.
-    let existing_games = get_links(
-        GetLinksInputBuilder::try_new(game.game_id.clone(), LinkTypes::GameUpdates)?
-            .build(),
-    )?;
-    for link in existing_games {
-        let existing_game_hash = link.target.into_action_hash().ok_or(
-            wasm_error!(WasmErrorInner::Guest("Invalid game hash".to_string())),
-        )?;
-        let existing_game_record = get(existing_game_hash, GetOptions::default())?
-            .ok_or(wasm_error!(WasmErrorInner::Guest("Game record not found".to_string())))?;
-        if let Some(existing_game) = existing_game_record.entry().to_app_option::<Game>()
-            .map_err(|e| wasm_error!(WasmErrorInner::Serialize(e)))? 
-        {
-            if existing_game.game_id == game.game_id {
-                return Ok(ValidateCallbackResult::Invalid(
-                    "Game ID must be unique".into(),
-                ));
-            }
-        }
-    }
-
-    // Ensure player_1 and player_2 are valid registered players
-    if !player_exists(&game.player_1)? {
-        return Ok(ValidateCallbackResult::Invalid(
-            "Player 1 is not a registered player".into(),
-        ));
-    }
-
-    if !player_exists(&game.player_2)? {
-        return Ok(ValidateCallbackResult::Invalid(
-            "Player 2 is not a registered player".into(),
-        ));
-    }
-
-    // Ensure player_1 and player_2 are not the same
-    if game.player_1 == game.player_2 {
-        return Ok(ValidateCallbackResult::Invalid(
-            "Player 1 and Player 2 cannot be the same agent".into(),
-        ));
-    }
-
-    // Ensure game_status is initially Waiting
-    if game.game_status != GameStatus::Waiting {
-        return Ok(ValidateCallbackResult::Invalid(
-            "Newly created games must have status 'Waiting'".into(),
-        ));
-    }
-
-
-    // Ensure player_1 is not in another ongoing game
-    if is_player_in_ongoing_game(&game.player_1)? {
-        return Ok(ValidateCallbackResult::Invalid(
-            "Player 1 is already in an ongoing game".into(),
-        ));
-    }
-
-    // Ensure player_2 is not in another ongoing game
-    if is_player_in_ongoing_game(&game.player_2)? {
-        return Ok(ValidateCallbackResult::Invalid(
-            "Player 2 is already in an ongoing game".into(),
-        ));
-    }
 
     Ok(ValidateCallbackResult::Valid)
 }
