@@ -2,24 +2,50 @@ use hdk::prelude::*;
 use ping_2_pong_integrity::*;
 use crate::Signal;
 
-// Helper function to get game hash
-pub fn get_game_hash_by_id(game_id: &ActionHash) -> ExternResult<Option<ActionHash>> {
-    // Use the game_id (an ActionHash) as the base of the link
-    let links = get_links(
-        GetLinksInputBuilder::try_new(game_id.clone(), LinkTypes::GameIdToGame)?
-            .build(),
-    )?;
-    if let Some(link) = links.first() {
-        let game_hash = link.target.clone().into_action_hash().ok_or(
-            wasm_error!(WasmErrorInner::Guest("Invalid game hash".to_string())),
-        )?;
-        Ok(Some(game_hash))
-    } else {
-        Ok(None)
-    }
+// Helper function to get all games.
+#[hdk_extern]
+pub fn get_all_games(_: ()) -> ExternResult<Vec<Record>> {
+    // Use an anchor to retrieve all games.
+    let games_anchor = anchor_for("games")?;
+    // Build the GetLinksInput using the builder.
+    let get_links_input = GetLinksInputBuilder::try_new(games_anchor, LinkTypes::GameIdToGame)?
+        .build();
+    
+    // Retrieve all links from the anchor.
+    let links = get_links(get_links_input)?;
+    
+    // Build GetInput objects for each link target.
+    let get_inputs: Vec<GetInput> = links
+        .into_iter()
+        .filter_map(|link| {
+            link.target.into_action_hash().map(|ah| GetInput::new(ah.into(), GetOptions::default()))
+        })
+        .collect();
+    
+    // Retrieve all records.
+    let records = HDK.with(|hdk| hdk.borrow().get(get_inputs))?;
+    Ok(records.into_iter().flatten().collect())
 }
 
-// Helper function to check if a player exists
+// Helper function to get game hash by game_id.
+// Since the game_id is now simply the entry hash, we use the global "games" anchor.
+pub fn get_game_hash_by_id(game_id: &ActionHash) -> ExternResult<Option<ActionHash>> {
+    let games_anchor = crate::utils::anchor_for("games")?;
+    let links = get_links(
+        GetLinksInputBuilder::try_new(games_anchor, LinkTypes::GameIdToGame)?
+            .build(),
+    )?;
+    for link in links {
+        if let Some(hash) = link.target.into_action_hash() {
+            if &hash == game_id {
+                return Ok(Some(hash));
+            }
+        }
+    }
+    Ok(None)
+}
+
+// Helper function to check if a player exists.
 fn player_exists(agent_pub_key: &AgentPubKey) -> ExternResult<bool> {
     let links = get_links(
         GetLinksInputBuilder::try_new(agent_pub_key.clone(), LinkTypes::PlayerToPlayers)?.build(),
@@ -27,9 +53,9 @@ fn player_exists(agent_pub_key: &AgentPubKey) -> ExternResult<bool> {
     Ok(!links.is_empty())
 }
 
-// Helper function to check if a player is already in an ongoing game
+// Helper function to check if a player is already in an ongoing game.
 fn is_player_in_ongoing_game(player_pub_key: &AgentPubKey) -> ExternResult<bool> {
-    // Fetch all games where the player is player_1
+    // Check games where the player is player1.
     let player1_games = get_links(
         GetLinksInputBuilder::try_new(player_pub_key.clone(), LinkTypes::Player1ToGames)?.build(),
     )?;
@@ -49,7 +75,7 @@ fn is_player_in_ongoing_game(player_pub_key: &AgentPubKey) -> ExternResult<bool>
             }
         }
     }
-    // Fetch all games where the player is player_2
+    // Check games where the player is player2.
     let player2_games = get_links(
         GetLinksInputBuilder::try_new(player_pub_key.clone(), LinkTypes::Player2ToGames)?.build(),
     )?;
@@ -74,33 +100,36 @@ fn is_player_in_ongoing_game(player_pub_key: &AgentPubKey) -> ExternResult<bool>
 
 #[hdk_extern]
 pub fn create_game(game: Game) -> ExternResult<Record> {
-    // Create the Game entry. The integrity zome's validation callback will run automatically.
+    // Create the Game entry.
     let game_hash = create_entry(&EntryTypes::Game(game.clone()))?;
-
-    // Link player_1 to the Game
+    
+    // Link the game to player1.
     create_link(
         game.player_1.clone(),
         game_hash.clone(),
         LinkTypes::Player1ToGames,
         (),
     )?;
-
-    // Link player_2 to the Game
+    
+    // If player2 is provided, link the game to player2.
+    if let Some(player2) = game.player_2.clone() {
+        create_link(
+            player2,
+            game_hash.clone(),
+            LinkTypes::Player2ToGames,
+            (),
+        )?;
+    }
+    
+    // Use the computed game_hash as the unique identifier for linking.
     create_link(
-        game.player_2.clone(),
-        game_hash.clone(),
-        LinkTypes::Player2ToGames,
-        (),
-    )?;
-
-    // Create a link from game_id to the Game entry for efficient lookup
-    create_link(
-        game.game_id.clone(), // game_id is an ActionHash; use as is
+        game_hash.clone(), 
         game_hash.clone(),
         LinkTypes::GameIdToGame,
         (),
     )?;
-
+    
+    // Also link from the global "games" anchor.
     let games_anchor = anchor_for("games")?;
     create_link(
         games_anchor,
@@ -108,63 +137,38 @@ pub fn create_game(game: Game) -> ExternResult<Record> {
         LinkTypes::GameIdToGame, 
         (),
     )?;
-
-    // Retrieve the created Game record
-    let record = get(game_hash.clone(), GetOptions::default())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("Could not find the newly created Game".to_string())))?;
-
-    // --- Coordinator-level checks begin here ---
-    // Check for uniqueness of game_id using the GameUpdates link.
-    let existing_games = get_links(
-        GetLinksInputBuilder::try_new(game.game_id.clone(), LinkTypes::GameUpdates)?
-            .build(),
-    )?;
-    for link in existing_games {
-        let existing_game_hash = link.target.into_action_hash().ok_or(
-            wasm_error!(WasmErrorInner::Guest("Invalid game hash".to_string())),
-        )?;
-        let existing_game_record = get(existing_game_hash, GetOptions::default())?
-            .ok_or(wasm_error!(WasmErrorInner::Guest("Game record not found".to_string())))?;
-        if let Some(existing_game) = existing_game_record
-            .entry()
-            .to_app_option::<Game>()
-            .map_err(|e| wasm_error!(WasmErrorInner::Serialize(e)))?
-        {
-            if existing_game.game_id == game.game_id {
-                return Err(wasm_error!(WasmErrorInner::Guest("Game ID must be unique".into())));
-            }
-        }
-    }
-
-    // Ensure player_1 and player_2 are valid registered players.
+    
+    // Coordinator-level validations.
     if !player_exists(&game.player_1)? {
         return Err(wasm_error!(WasmErrorInner::Guest("Player 1 is not a registered player".into())));
     }
-    if !player_exists(&game.player_2)? {
-        return Err(wasm_error!(WasmErrorInner::Guest("Player 2 is not a registered player".into())));
+    // Only validate player2 if it is Some.
+    if let Some(player2) = &game.player_2 {
+        if !player_exists(player2)? {
+            return Err(wasm_error!(WasmErrorInner::Guest("Player 2 is not a registered player".into())));
+        }
+        // Ensure that player1 and player2 are not the same.
+        if game.player_1 == *player2 {
+            return Err(wasm_error!(WasmErrorInner::Guest("Player 1 and Player 2 cannot be the same agent".into())));
+        }
+        // Check if player2 is in an ongoing game.
+        if is_player_in_ongoing_game(player2)? {
+            return Err(wasm_error!(WasmErrorInner::Guest("Player 2 is already in an ongoing game".into())));
+        }
     }
-
-    // Ensure player_1 and player_2 are not the same.
-    if game.player_1 == game.player_2 {
-        return Err(wasm_error!(WasmErrorInner::Guest("Player 1 and Player 2 cannot be the same agent".into())));
-    }
-
-    // Ensure game_status is initially Waiting.
-    if game.game_status != GameStatus::Waiting {
-        return Err(wasm_error!(WasmErrorInner::Guest("Newly created games must have status 'Waiting'".into())));
-    }
-
-    // Ensure player_1 is not in another ongoing game.
+    
+    // Always check if player1 is in an ongoing game.
     if is_player_in_ongoing_game(&game.player_1)? {
         return Err(wasm_error!(WasmErrorInner::Guest("Player 1 is already in an ongoing game".into())));
     }
-
-    // Ensure player_2 is not in another ongoing game.
-    if is_player_in_ongoing_game(&game.player_2)? {
-        return Err(wasm_error!(WasmErrorInner::Guest("Player 2 is already in an ongoing game".into())));
+    
+    if game.game_status != GameStatus::Waiting {
+        return Err(wasm_error!(WasmErrorInner::Guest("Newly created games must have status 'Waiting'".into())));
     }
-    // --- End of coordinator-level checks ---
-
+    
+    // Retrieve and return the created record.
+    let record = get(game_hash.clone(), GetOptions::default())?
+        .ok_or(wasm_error!(WasmErrorInner::Guest("Could not find the newly created Game".to_string())))?;
     Ok(record)
 }
 
@@ -261,23 +265,27 @@ pub fn delete_game(original_game_hash: ActionHash) -> ExternResult<ActionHash> {
         .as_option()
         .ok_or(wasm_error!(WasmErrorInner::Guest("Game record has no entry".to_string())))?;
     let game = <Game>::try_from(entry)?;
-    let links = get_links(
+    // Delete link for player1.
+    let links1 = get_links(
         GetLinksInputBuilder::try_new(game.player_1.clone(), LinkTypes::Player1ToGames)?.build(),
     )?;
-    for link in links {
+    for link in links1 {
         if let Some(action_hash) = link.target.into_action_hash() {
             if action_hash == original_game_hash {
                 delete_link(link.create_link_hash)?;
             }
         }
     }
-    let links = get_links(
-        GetLinksInputBuilder::try_new(game.player_2.clone(), LinkTypes::Player2ToGames)?.build(),
-    )?;
-    for link in links {
-        if let Some(action_hash) = link.target.into_action_hash() {
-            if action_hash == original_game_hash {
-                delete_link(link.create_link_hash)?;
+    // If player2 is present, delete its link.
+    if let Some(player2) = game.player_2 {
+        let links2 = get_links(
+            GetLinksInputBuilder::try_new(player2, LinkTypes::Player2ToGames)?.build(),
+        )?;
+        for link in links2 {
+            if let Some(action_hash) = link.target.into_action_hash() {
+                if action_hash == original_game_hash {
+                    delete_link(link.create_link_hash)?;
+                }
             }
         }
     }
@@ -321,7 +329,11 @@ pub fn get_deleted_games_for_player_1(
         None,
         GetOptions::default(),
     )?;
-    Ok(details.into_inner().into_iter().filter(|(_link, deletes)| !deletes.is_empty()).collect())
+    Ok(details
+        .into_inner()
+        .into_iter()
+        .filter(|(_link, deletes)| !deletes.is_empty())
+        .collect())
 }
 
 #[hdk_extern]
@@ -339,16 +351,21 @@ pub fn get_deleted_games_for_player_2(
         None,
         GetOptions::default(),
     )?;
-    Ok(details.into_inner().into_iter().filter(|(_link, deletes)| !deletes.is_empty()).collect())
+    Ok(details
+        .into_inner()
+        .into_iter()
+        .filter(|(_link, deletes)| !deletes.is_empty())
+        .collect())
 }
 
-// Actual game logic and signaling here
+// Actual game logic and signaling here.
 #[hdk_extern]
 pub fn update_paddle_position(input: PaddleUpdateInput) -> ExternResult<Record> {
     let current_record = get(input.previous_game_hash.clone(), GetOptions::default())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("Game record not found".to_string())))?;
     
-    let mut current_game: Game = current_record.entry()
+    let mut current_game: Game = current_record
+        .entry()
         .to_app_option()
         .map_err(|e| wasm_error!(WasmErrorInner::Guest(format!("SerializedBytesError: {:?}", e))))?
         .ok_or(wasm_error!(WasmErrorInner::Guest("Malformed game record".to_string())))?;
@@ -362,15 +379,15 @@ pub fn update_paddle_position(input: PaddleUpdateInput) -> ExternResult<Record> 
     let updated_game_hash = update_entry(input.previous_game_hash, &current_game)?;
     
     create_link(
-        input.original_game_hash,
+        input.original_game_hash.clone(),
         updated_game_hash.clone(),
         LinkTypes::GameUpdates,
         (),
-    )?;
+    )?;    
     
     // Emit the signal with the updated positions.
     let signal = Signal::GameUpdate {
-        game_id: current_game.game_id.clone(),
+        game_id: input.original_game_hash.clone(),
         paddle1: current_game.player_1_paddle,
         paddle2: current_game.player_2_paddle,
         ball_x: current_game.ball_x,
@@ -392,6 +409,7 @@ pub struct PaddleUpdateInput {
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct GameUpdateData {
+    // This field isn't used in the DNA validation now.
     pub game_id: ActionHash,
     pub player_1_paddle: u32,
     pub player_2_paddle: u32,

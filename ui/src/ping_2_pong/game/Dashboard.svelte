@@ -3,7 +3,10 @@
   import Lobby from "./Lobby.svelte";
   import PlayButton from "./PlayButton.svelte";
   import { currentRoute } from "../../stores/routeStore";
-  
+  import { createEventDispatcher } from "svelte";
+
+  const dispatch = createEventDispatcher();
+
   function handlePlay() {
     currentRoute.set("gameplay");
   }
@@ -17,7 +20,8 @@
     <PlayButton on:play={handlePlay} />
   </div>
   <div class="sidebar right">
-    <Lobby />
+    <!-- Dispatch join-game event from Lobby upward -->
+    <Lobby on:join-game={(e) => dispatch("join-game", e.detail)} />
   </div>
 </div>
 

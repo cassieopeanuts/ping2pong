@@ -5,6 +5,7 @@
   import { clientContext } from "./contexts";
   import { currentRoute } from "./stores/routeStore";
   import { playerProfile } from "./stores/playerProfile";
+  import { currentGame } from "./stores/currentGame";
 
   import WelcomePopup from "./ping_2_pong/WelcomePopup.svelte";
   import Dashboard from "./ping_2_pong/game/Dashboard.svelte";
@@ -47,19 +48,14 @@
     route = value;
   });
 
-  // Create a dummy game for routing purposes. In a real app you’d select a waiting game from the lobby.
-  const waitingStatus: GameStatus = { type: "Waiting" };
-  const dummyGame: Game = {
-    game_id: "dummy_game_hash" as unknown as ActionHash,
-    player_1: "dummy_player_1" as any,
-    player_2: "dummy_player_2" as any,
-    created_at: Date.now(),
-    game_status: waitingStatus,
-    player_1_paddle: 250,
-    player_2_paddle: 250,
-    ball_x: 400,
-    ball_y: 300,
-  };
+  // currentGame store holds a string game hash.
+  let gameId: string | null = null;
+  currentGame.subscribe((value) => {
+    gameId = value;
+  });
+
+  // Reactive variable to cast gameId to ActionHash (if available)
+  $: castedGameId = gameId ? (gameId as unknown as ActionHash) : undefined;
 
   let currentPlayerProfile;
   playerProfile.subscribe((value) => {
@@ -80,17 +76,24 @@
     <WelcomePopup />
   {:else}
     {#if route === "dashboard"}
-      <Dashboard />
+      <!-- When a join-game event is dispatched, update currentGame and route -->
+      <Dashboard on:join-game={(e) => {
+        currentGame.set(e.detail.gameHash);
+        currentRoute.set("gameplay");
+      }} />
     {:else if route === "gameplay"}
-      {#if currentPlayerProfile}
-        <PongGame game={dummyGame} playerKey={currentPlayerProfile.agentKey} />
+      {#if currentPlayerProfile && castedGameId}
+        <PongGame gameId={castedGameId} playerKey={currentPlayerProfile.agentKey} />
       {:else}
         <p>Loading game...</p>
       {/if}
     {:else if route === "statistics"}
       <StatisticsDashboard />
     {:else}
-      <Dashboard />
+      <Dashboard on:join-game={(e) => {
+        currentGame.set(e.detail.gameHash);
+        currentRoute.set("gameplay");
+      }} />
     {/if}
   {/if}
 {/if}

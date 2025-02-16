@@ -15,9 +15,8 @@ pub enum GameStatus {
 #[derive(Clone, PartialEq)]
 #[hdk_entry_helper]
 pub struct Game {
-    pub game_id: ActionHash,
     pub player_1: AgentPubKey,
-    pub player_2: AgentPubKey,
+    pub player_2: Option<AgentPubKey>,
     pub created_at: Timestamp,
     pub game_status: GameStatus,
     pub player_1_paddle: u32,
@@ -30,11 +29,10 @@ pub struct Game {
 // Validate_create_game function
 pub fn validate_create_game(
     action: EntryCreationAction,
-    game: Game,
 ) -> ExternResult<ValidateCallbackResult> {
     info!(
-        "Validating creation of game with ID: {:?} by agent: {:?}",
-        game.game_id,  
+        "Validating creation of game by agent: {:?}",
+
         action.author()
     );
 
@@ -48,11 +46,17 @@ pub fn validate_update_game(
     original_game: Game,
 ) -> ExternResult<ValidateCallbackResult> {
     // Only player_1 or player_2 can update the game
-    if action.author != original_game.player_1 && action.author != original_game.player_2 {
-        return Ok(ValidateCallbackResult::Invalid(
-            "Only game participants can update the game".into(),
-        ));
+    if action.author != original_game.player_1
+    && match &original_game.player_2 {
+        Some(player2) => action.author != *player2,
+        None => true,
     }
+{
+    return Ok(ValidateCallbackResult::Invalid(
+        "Only game participants can update the game".into(),
+    ));
+}
+
 
     // Validate game status transitions
     match (&original_game.game_status, &updated_game.game_status) {
@@ -88,11 +92,17 @@ pub fn validate_delete_game(
     original_game: Game,
 ) -> ExternResult<ValidateCallbackResult> {
     // Only player_1 or player_2 can delete the game
-    if action.author != original_game.player_1 && action.author != original_game.player_2 {
-        return Ok(ValidateCallbackResult::Invalid(
-            "Only game participants can delete the game".into(),
-        ));
+    if action.author != original_game.player_1
+    && match &original_game.player_2 {
+        Some(player2) => action.author != *player2,
+        None => true,
     }
+{
+    return Ok(ValidateCallbackResult::Invalid(
+        "Only game participants can delete the game".into(),
+    ));
+}
+
 
     // Only allow deletion if the game is not in progress
     match original_game.game_status {

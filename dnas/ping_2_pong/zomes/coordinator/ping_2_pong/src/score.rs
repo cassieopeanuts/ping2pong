@@ -28,11 +28,16 @@ pub fn create_score(score: Score) -> ExternResult<Record> {
     }
 
     // Ensure the score is being assigned to a player in the game.
-    if score.player != game.player_1 && score.player != game.player_2 {
-        return Err(wasm_error!(WasmErrorInner::Guest(
-            "Score must be assigned to a player in the game".into()
-        )));
+    if score.player != game.player_1
+    && match &game.player_2 {
+        Some(p2) => score.player != *p2,
+        None => true,
     }
+{
+    return Err(wasm_error!(WasmErrorInner::Guest(
+        "Score must be assigned to a player in the game".into()
+    )));
+}
 
     // Validate that the score points are within the acceptable range.
     if score.player_points > MAX_POINTS {
@@ -213,26 +218,19 @@ pub fn get_deleted_scores_for_player(player: AgentPubKey) -> ExternResult<Vec<(S
 }
 
 // Helper function to get game hash by game_id.
-// (Note: Adjust this helper as needed for your anchor strategy.)
 fn get_game_hash_by_id(game_id: &ActionHash) -> ExternResult<Option<ActionHash>> {
-    // For example, use an anchor for "game_updates".
-    let anchor = crate::utils::anchor_for("game_updates")?;
-    let game_links = get_links(
-        GetLinksInputBuilder::try_new(anchor, LinkTypes::GameUpdates)?.build(),
+    // Since the game_id is now the game’s entry hash,
+    // we simply try to retrieve the link from the global "games" anchor.
+    let games_anchor = crate::utils::anchor_for("games")?;
+    let links = get_links(
+        GetLinksInputBuilder::try_new(games_anchor, LinkTypes::GameIdToGame)?
+            .build(),
     )?;
-    for link in game_links {
-        let game_hash = link.target.into_action_hash().ok_or(
-            wasm_error!(WasmErrorInner::Guest("Invalid game hash".to_string())),
-        )?;
-        let game_record = get(game_hash.clone(), GetOptions::default())?
-            .ok_or(wasm_error!(WasmErrorInner::Guest("Game record not found".to_string())))?;
-        if let Some(game) = game_record
-            .entry()
-            .to_app_option::<Game>()
-            .map_err(|e| wasm_error!(WasmErrorInner::Serialize(e)))?
-        {
-            if game.game_id == *game_id {
-                return Ok(Some(game_hash.clone()));
+    for link in links {
+        if let Some(hash) = link.target.into_action_hash() {
+            // If the provided game_id equals this hash, return it.
+            if &hash == game_id {
+                return Ok(Some(hash));
             }
         }
     }

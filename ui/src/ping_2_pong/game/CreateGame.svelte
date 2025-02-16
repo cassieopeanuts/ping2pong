@@ -8,10 +8,11 @@
   let client: AppClient;
   const appClientContext = getContext<ClientContext>(clientContext);
 
-  // Generate a dummy game_id string (later converted in DNA to an ActionHash)
-  export let gameId: string = Date.now().toString();  
-  export let player1: AgentPubKey = "default_player1" as any;
-  export let player2: AgentPubKey = "default_player2" as any;
+  // For game creation, only one agent (the host) creates the game.
+  let player1: AgentPubKey;
+  let player2: AgentPubKey | null; // Leave as null initially.
+
+  // Use the current time for the creation timestamp.
   export let createdAt: number = Date.now();
 
   // Default game status.
@@ -20,17 +21,16 @@
   $: isGameValid = true;
 
   onMount(async () => {
-    if (!gameId) throw new Error("The gameId input is required for the CreateGame element");
-    if (!player1) throw new Error("The player1 input is required for the CreateGame element");
-    if (!player2) throw new Error("The player2 input is required for the CreateGame element");
-    if (!createdAt) throw new Error("The createdAt input is required for the CreateGame element");
     client = await appClientContext.getClient();
+    // For game creation, assign player1 to the current agent's key.
+    player1 = client.myPubKey;
+    // Leave player2 as null since no second agent is joining yet.
+    player2 = null;
   });
 
   async function createGame() {
-    // Build the game entry – note that game_id will be set by the DNA to an ActionHash.
-    const gameEntry: Game = {
-      game_id: gameId as unknown as ActionHash, // cast as needed
+    // Build the game entry without a game_id (it is computed in the DNA).
+    const gameEntry = {
       player_1: player1,
       player_2: player2,
       created_at: createdAt,
@@ -39,7 +39,7 @@
       player_2_paddle: 250,
       ball_x: 400,
       ball_y: 300,
-    };
+    } as Omit<Game, "game_id">;
 
     try {
       const record: Record = await client.callZome({
@@ -49,6 +49,7 @@
         fn_name: "create_game",
         payload: gameEntry,
       });
+      // Use the returned entry hash as the game's unique identifier.
       dispatch("game-created", { gameHash: record.signed_action.hashed.hash });
     } catch (e) {
       alert((e as HolochainError).message);

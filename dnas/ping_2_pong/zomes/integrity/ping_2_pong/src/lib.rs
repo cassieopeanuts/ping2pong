@@ -62,7 +62,9 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
         FlatOp::StoreEntry(store_entry) => match store_entry {
             OpEntry::CreateEntry { app_entry, action } => match app_entry {
                 EntryTypes::Game(game) => {
-                    validate_create_game(EntryCreationAction::Create(action), game)
+                    // Removed reference to game.game_id.
+                    info!("Validating creation of game by agent: {:?}", action.author);
+                    validate_create_game(EntryCreationAction::Create(action))
                 }
                 EntryTypes::Player(player) => {
                     validate_create_player(EntryCreationAction::Create(action), player)
@@ -76,7 +78,7 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
             },
             OpEntry::UpdateEntry { app_entry, action, .. } => match app_entry {
                 EntryTypes::Game(game) => {
-                    validate_create_game(EntryCreationAction::Update(action), game)
+                    validate_create_game(EntryCreationAction::Update(action))
                 }
                 EntryTypes::Player(player) => {
                     validate_create_player(EntryCreationAction::Update(action), player)
@@ -313,7 +315,8 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
             match store_record {
                 OpRecord::CreateEntry { app_entry, action } => match app_entry {
                     EntryTypes::Game(game) => {
-                        validate_create_game(EntryCreationAction::Create(action), game)
+                        info!("Validating creation of game by agent: {:?}", action.author);
+                        validate_create_game(EntryCreationAction::Create(action))
                     }
                     EntryTypes::Player(player) => {
                         validate_create_player(EntryCreationAction::Create(action), player)
@@ -346,7 +349,6 @@ pub fn validate(op: Op) -> ExternResult<ValidateCallbackResult> {
                         EntryTypes::Game(game) => {
                             let result = validate_create_game(
                                 EntryCreationAction::Update(action.clone()),
-                                game.clone(),
                             )?;
                             if let ValidateCallbackResult::Valid = result {
                                 let original_game: Option<Game> = original_record
