@@ -15,7 +15,7 @@
   const appClientContext = getContext<ClientContext>(clientContext);
 
   // Live game state (to be fetched from the DHT)
-  let liveGame: Game;
+  let liveGame: Game | undefined;
 
   // Local state for rendering the game.
   let ballPosition = { x: 0, y: 0 };
@@ -27,7 +27,6 @@
   let animationFrameId: number;
   let unsubscribeFromSignals: () => void;
 
-  // Fetch the live game state from the DHT.
   async function fetchLiveGame() {
     try {
       const result = await client.callZome({
@@ -37,25 +36,31 @@
         fn_name: "get_latest_game",
         payload: gameId,
       });
-      if (result) {
-        // Extract the game entry from the record.
-        liveGame = (result.entry as any)?.Present?.entry as Game;
-        if (liveGame) {
-          ballPosition = { x: liveGame.ball_x, y: liveGame.ball_y };
-          paddle1Position = { x: 20, y: liveGame.player_1_paddle };
-          paddle2Position = { x: 760, y: liveGame.player_2_paddle };
-        }
+      console.log("Fetched game record:", result);
+      // Check that the result has the expected structure.
+      if (
+        result &&
+        result.entry &&
+        result.entry.Present &&
+        result.entry.Present.entry
+      ) {
+        liveGame = result.entry.Present.entry as Game;
+        console.log("Deserialized live game:", liveGame);
+        ballPosition = { x: liveGame.ball_x, y: liveGame.ball_y };
+        paddle1Position = { x: 20, y: liveGame.player_1 ? liveGame.player_1_paddle : 250 };
+        paddle2Position = { x: 760, y: liveGame.player_2 ? liveGame.player_2_paddle : 250 };
+      } else {
+        console.warn("Game record structure is not as expected:", result);
       }
     } catch (e) {
       console.error("Error fetching live game state:", e);
     }
   }
 
-  // Handle keyboard input to move the paddle.
   function handleKeyDown(e: KeyboardEvent) {
     if (!liveGame) return;
-    // Check if the current player is player_1.
-    if (playerKey === liveGame.player_1) {
+    // Check if current player is player1.
+    if (playerKey.toString() === liveGame.player_1.toString()) {
       if (e.key === "ArrowUp") {
         paddle1Position.y = Math.max(0, paddle1Position.y - 10);
         sendPaddleUpdate(paddle1Position.y);
@@ -64,8 +69,8 @@
         sendPaddleUpdate(paddle1Position.y);
       }
     }
-    // Otherwise, if current player is player_2.
-    else if (playerKey === liveGame.player_2) {
+    // Check if current player is player2.
+    else if (liveGame.player_2 && playerKey.toString() === liveGame.player_2.toString()) {
       if (e.key === "ArrowUp") {
         paddle2Position.y = Math.max(0, paddle2Position.y - 10);
         sendPaddleUpdate(paddle2Position.y);
@@ -76,14 +81,12 @@
     }
   }
 
-  // Send the updated paddle position to the coordinator.
   async function sendPaddleUpdate(newY: number) {
     try {
-      // Build updated game data.
       const updatedGame = {
-        game_id: liveGame.game_id,
-        player_1_paddle: playerKey === liveGame.player_1 ? newY : paddle1Position.y,
-        player_2_paddle: playerKey === liveGame.player_2 ? newY : paddle2Position.y,
+        // We no longer send a game_id field.
+        player_1_paddle: playerKey.toString() === liveGame?.player_1.toString() ? newY : paddle1Position.y,
+        player_2_paddle: liveGame?.player_2 && playerKey.toString() === liveGame.player_2.toString() ? newY : paddle2Position.y,
         ball_x: ballPosition.x,
         ball_y: ballPosition.y,
       };
@@ -94,10 +97,9 @@
         zome_name: "ping_2_pong",
         fn_name: "update_paddle_position",
         payload: {
-          // For simplicity, using game_id as both original and previous hash.
-          // In production, track the latest update hash.
-          original_game_hash: liveGame.game_id,
-          previous_game_hash: liveGame.game_id,
+          // For simplicity, using gameId as both original and previous.
+          original_game_hash: gameId,
+          previous_game_hash: gameId,
           updated_game: updatedGame,
         },
       });
@@ -106,7 +108,6 @@
     }
   }
 
-  // Draw the game on the canvas.
   function draw() {
     if (!ctx) return;
     ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -128,10 +129,9 @@
     animationFrameId = requestAnimationFrame(draw);
   }
 
-  // Subscribe to game signals to update live state.
   function subscribeToGameSignals() {
     return client.on("signal", (signal: any) => {
-      if (signal && signal.type === "GameUpdate" && signal.game_id === liveGame.game_id) {
+      if (signal && signal.type === "GameUpdate" && signal.game_id === gameId) {
         if (signal.ball_x !== undefined && signal.ball_y !== undefined) {
           ballPosition = { x: signal.ball_x, y: signal.ball_y };
         }
@@ -141,14 +141,6 @@
         if (signal.paddle2 !== undefined) {
           paddle2Position.y = signal.paddle2;
         }
-        // Optionally update the liveGame state as well.
-        liveGame = {
-          ...liveGame,
-          ball_x: signal.ball_x,
-          ball_y: signal.ball_y,
-          player_1_paddle: signal.paddle1,
-          player_2_paddle: signal.paddle2,
-        };
       }
     });
   }
@@ -168,9 +160,40 @@
   });
 </script>
 
-<canvas bind:this={canvas} width="800" height="600"></canvas>
+<div class="game-window">
+  <!-- Display current players' public keys -->
+  {#if liveGame}
+    <div class="players-info">
+      <div class="player player1">
+        {liveGame.player_1 ? liveGame.player_1.toString() : "Unknown"}
+      </div>
+      <div class="player player2">
+        {liveGame.player_2 ? liveGame.player_2.toString() : "Waiting for player..."}
+      </div>
+    </div>
+  {/if}
+  <canvas bind:this={canvas} width="800" height="600"></canvas>
+</div>
 
 <style>
+  .game-window {
+    position: relative;
+  }
+  .players-info {
+    position: absolute;
+    top: 10px;
+    width: 100%;
+    display: flex;
+    justify-content: space-between;
+    padding: 0 20px;
+    color: orange;
+    font-size: 1rem;
+    font-weight: bold;
+    z-index: 1;
+  }
+  .player {
+    /* Additional styling if needed */
+  }
   canvas {
     background-color: #000;
     display: block;

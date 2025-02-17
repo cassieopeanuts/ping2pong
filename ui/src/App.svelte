@@ -13,7 +13,7 @@
   import StatisticsDashboard from "./ping_2_pong/game/StatisticsDashboard.svelte";
 
   import type { AppClient, HolochainError, ActionHash } from "@holochain/client";
-  import type { Game, GameStatus } from "./ping_2_pong/ping_2_pong/types";
+  import type { Game } from "./ping_2_pong/ping_2_pong/types";
 
   let client: AppClient;
   let error: HolochainError | undefined;
@@ -41,6 +41,7 @@
 
   setContext(clientContext, appClientContext);
 
+  // isRegistered is true if playerProfile is set.
   const isRegistered = derived(playerProfile, ($playerProfile) => $playerProfile !== null);
 
   let route: string;
@@ -48,19 +49,20 @@
     route = value;
   });
 
-  // currentGame store holds a string game hash.
+  // currentGame holds a string game hash.
   let gameId: string | null = null;
   currentGame.subscribe((value) => {
     gameId = value;
   });
-
-  // Reactive variable to cast gameId to ActionHash (if available)
   $: castedGameId = gameId ? (gameId as unknown as ActionHash) : undefined;
 
+  // Subscribe to playerProfile
   let currentPlayerProfile;
   playerProfile.subscribe((value) => {
     currentPlayerProfile = value;
   });
+
+  // No extra conversion is needed here since agentKey is stored as a string.
 </script>
 
 {#if loading}
@@ -75,37 +77,56 @@
   {#if !$isRegistered}
     <WelcomePopup />
   {:else}
-    {#if route === "dashboard"}
-      <!-- When a join-game event is dispatched, update currentGame and route -->
-      <Dashboard on:join-game={(e) => {
-        currentGame.set(e.detail.gameHash);
-        currentRoute.set("gameplay");
-      }} />
-    {:else if route === "gameplay"}
-      {#if currentPlayerProfile && castedGameId}
-        <PongGame gameId={castedGameId} playerKey={currentPlayerProfile.agentKey} />
-      {:else}
-        <p>Loading game...</p>
+    <main>
+      <!-- Display user profile info in orange -->
+      {#if currentPlayerProfile}
+        <header class="user-header">
+          <p><strong>Name:</strong> {currentPlayerProfile.nickname}</p>
+          <p><strong>Public Key:</strong> {currentPlayerProfile.agentKey}</p>
+        </header>
       {/if}
-    {:else if route === "statistics"}
-      <StatisticsDashboard />
-    {:else}
-      <Dashboard on:join-game={(e) => {
-        currentGame.set(e.detail.gameHash);
-        currentRoute.set("gameplay");
-      }} />
-    {/if}
+
+      {#if route === "dashboard"}
+        <Dashboard on:join-game={(e) => {
+          currentGame.set(e.detail.gameHash);
+          currentRoute.set("gameplay");
+        }} />
+      {:else if route === "gameplay"}
+        {#if currentPlayerProfile && castedGameId}
+          <PongGame gameId={castedGameId} playerKey={currentPlayerProfile.agentKey} />
+        {:else}
+          <p>Loading game...</p>
+        {/if}
+      {:else if route === "statistics"}
+        <StatisticsDashboard />
+      {:else}
+        <Dashboard on:join-game={(e) => {
+          currentGame.set(e.detail.gameHash);
+          currentRoute.set("gameplay");
+        }} />
+      {/if}
+    </main>
   {/if}
 {/if}
 
 <style>
   main {
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    height: 100vh;
+    min-height: 100vh;
     font-family: sans-serif;
     color: #fff;
     background-color: #222;
+  }
+  .user-header {
+    color: orange;
+    padding: 1rem;
+    text-align: center;
+    width: 100%;
+  }
+  .user-header p {
+    margin: 0.5rem 0;
   }
 </style>

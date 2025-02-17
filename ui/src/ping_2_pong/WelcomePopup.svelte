@@ -1,15 +1,15 @@
 <script lang="ts">
   import { createEventDispatcher, getContext } from "svelte";
   import { playerProfile } from "../stores/playerProfile";
-  // Import the client context and its type.
   import { clientContext, type ClientContext } from "../contexts";
   import type { AppClient, AgentPubKey } from "@holochain/client";
+  import { encodeHashToBase64 } from "@holochain/client";
 
   const dispatch = createEventDispatcher();
   let nickname: string = "";
   let client: AppClient;
 
-  // Explicitly tell TypeScript the type of the client context.
+  // Retrieve the client context.
   const appClientContext = getContext<ClientContext>(clientContext);
 
   async function register() {
@@ -22,8 +22,7 @@
       client = await appClientContext.getClient();
 
       // Retrieve the agent's public key.
-      // (Assuming client.myPubKey returns a HoloHash/ActionHash.)
-      const agentKey: AgentPubKey = client.myPubKey;
+      const agentKey: AgentPubKey = client.myPubKey; // Use myAgentPubKey
 
       // Build the player object required by your DNA.
       const player = {
@@ -42,8 +41,11 @@
 
       console.log("Player created:", record);
 
-      // Convert the agent key to a string before storing.
-      playerProfile.set({ agentKey: agentKey.toString(), nickname: nickname.trim() });
+      // Convert the agent key to a Base64 string before storing.
+      playerProfile.set({ 
+        agentKey: encodeHashToBase64(agentKey),
+        nickname: nickname.trim()
+      });
 
       dispatch("registered", { nickname: nickname.trim() });
     } catch (e) {

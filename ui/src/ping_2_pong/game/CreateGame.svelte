@@ -21,12 +21,12 @@
   $: isGameValid = true;
 
   onMount(async () => {
-    client = await appClientContext.getClient();
-    // For game creation, assign player1 to the current agent's key.
-    player1 = client.myPubKey;
-    // Leave player2 as null since no second agent is joining yet.
-    player2 = null;
-  });
+  client = await appClientContext.getClient();
+  // Use the correct property to obtain the current agent's public key.
+  player1 = client.myPubKey;
+  // Leave player2 as null since no second agent is joining yet.
+  player2 = null;
+});
 
   async function createGame() {
     // Build the game entry without a game_id (it is computed in the DNA).
