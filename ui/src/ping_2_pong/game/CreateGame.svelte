@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { ActionHash, AgentPubKey, AppClient, HolochainError, Record } from "@holochain/client";
   import { createEventDispatcher, getContext, onMount } from "svelte";
-  import { type ClientContext, clientContext } from "../../contexts";
+  import { clientContext, type ClientContext } from "../../contexts";
   import type { Game, GameStatus } from "../ping_2_pong/types";
 
   const dispatch = createEventDispatcher();
@@ -10,35 +10,35 @@
 
   // For game creation, only one agent (the host) creates the game.
   let player1: AgentPubKey;
-  let player2: AgentPubKey | null; // Leave as null initially.
+  // Leave player2 undefined if no opponent is available.
+  let player2: AgentPubKey | undefined = undefined;
 
   // Use the current time for the creation timestamp.
   export let createdAt: number = Date.now();
 
-  // Default game status.
+  // New games are always created in Waiting state.
   let gameStatus: GameStatus = { type: "Waiting" };
 
   $: isGameValid = true;
 
   onMount(async () => {
-  client = await appClientContext.getClient();
-  // Use the correct property to obtain the current agent's public key.
-  player1 = client.myPubKey;
-  // Leave player2 as null since no second agent is joining yet.
-  player2 = null;
-});
+    client = await appClientContext.getClient();
+    // Use the current agent's public key as player1.
+    player1 = client.myPubKey;
+    // player2 remains undefined
+  });
 
   async function createGame() {
-    // Build the game entry without a game_id (it is computed in the DNA).
+    // Build the game entry. We conditionally add player2 only if defined.
     const gameEntry = {
       player_1: player1,
-      player_2: player2,
       created_at: createdAt,
       game_status: gameStatus,
       player_1_paddle: 250,
       player_2_paddle: 250,
       ball_x: 400,
       ball_y: 300,
+      ...(player2 ? { player2 } : {})  // omit player_2 if not set
     } as Omit<Game, "game_id">;
 
     try {
@@ -49,7 +49,6 @@
         fn_name: "create_game",
         payload: gameEntry,
       });
-      // Use the returned entry hash as the game's unique identifier.
       dispatch("game-created", { gameHash: record.signed_action.hashed.hash });
     } catch (e) {
       alert((e as HolochainError).message);
@@ -59,15 +58,23 @@
 
 <div>
   <h3>Create Game</h3>
-  <div>
-    <label for="Game Status">Game Status:</label>
-    <select name="Game Status" bind:value={gameStatus.type}>
-      <option value="Waiting">Waiting</option>
-      <option value="InProgress">In Progress</option>
-      <option value="Finished">Finished</option>
-    </select>
-  </div>
   <button disabled={!isGameValid} on:click={createGame}>
     Create Game
   </button>
 </div>
+
+<style>
+  button {
+    font-size: 1.5rem;
+    padding: 1rem 2rem;
+    border: none;
+    background-color: #646cff;
+    color: white;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background-color 0.25s;
+  }
+  button:hover {
+    background-color: #535bf2;
+  }
+</style>

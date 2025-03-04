@@ -11,6 +11,12 @@ pub enum GameStatus {
     Finished,
 }
 
+#[hdk_entry_helper]
+#[derive(Clone)]
+pub struct Presence {
+    pub agent_pubkey: AgentPubKey,
+    pub timestamp: u64,
+}
 
 #[derive(Clone, PartialEq)]
 #[hdk_entry_helper]

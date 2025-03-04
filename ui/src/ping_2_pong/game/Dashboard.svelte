@@ -20,7 +20,7 @@
     <PlayButton on:play={handlePlay} />
   </div>
   <div class="sidebar right">
-    <!-- Dispatch join-game event from Lobby upward -->
+    <!-- Lobby dispatches join-game events -->
     <Lobby on:join-game={(e) => dispatch("join-game", e.detail)} />
   </div>
 </div>

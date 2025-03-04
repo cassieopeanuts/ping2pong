@@ -41,7 +41,7 @@ pub enum Signal {
         original_app_entry: EntryTypes,
     },
 
-        // New variant for real-time game updates:
+        // Signal for real-time game updates:
         GameUpdate {
             game_id: ActionHash,        
             paddle1: u32,            // e.g. Y position for player 1's paddle
@@ -50,6 +50,12 @@ pub enum Signal {
             ball_y: u32,
         },
 
+        // SIgnal for game invitation
+        GameInvitation {
+            game_id: ActionHash,
+            inviter: AgentPubKey,
+            message: String,
+        },
 }
 
 
@@ -150,4 +156,10 @@ fn get_entry_for_action(action_hash: &ActionHash) -> ExternResult<Option<EntryTy
         _ => return Ok(None),
     };
     EntryTypes::deserialize_from_type(*zome_index, *entry_index, entry)
+}
+
+#[hdk_extern]
+pub fn send_signal(signal: Signal) -> ExternResult<()> {
+    emit_signal(signal)?;
+    Ok(())
 }

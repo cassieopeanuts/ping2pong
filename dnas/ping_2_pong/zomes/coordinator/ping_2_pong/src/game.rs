@@ -100,10 +100,15 @@ fn is_player_in_ongoing_game(player_pub_key: &AgentPubKey) -> ExternResult<bool>
 
 #[hdk_extern]
 pub fn create_game(game: Game) -> ExternResult<Record> {
+    // Ensure player_1 is always provided.
+    if game.player_1 == AgentPubKey::from_raw_36(vec![0; 32]) {
+                return Err(wasm_error!(WasmErrorInner::Guest("Player 1 must be set".into())));
+    }
+    
     // Create the Game entry.
     let game_hash = create_entry(&EntryTypes::Game(game.clone()))?;
     
-    // Link the game to player1.
+    // Link the game from player1.
     create_link(
         game.player_1.clone(),
         game_hash.clone(),
@@ -111,7 +116,7 @@ pub fn create_game(game: Game) -> ExternResult<Record> {
         (),
     )?;
     
-    // If player2 is provided, link the game to player2.
+    // Link player2 only if provided.
     if let Some(player2) = game.player_2.clone() {
         create_link(
             player2,
@@ -121,15 +126,7 @@ pub fn create_game(game: Game) -> ExternResult<Record> {
         )?;
     }
     
-    // Use the computed game_hash as the unique identifier for linking.
-    create_link(
-        game_hash.clone(), 
-        game_hash.clone(),
-        LinkTypes::GameIdToGame,
-        (),
-    )?;
-    
-    // Also link from the global "games" anchor.
+    // Link from global "games" anchor.
     let games_anchor = anchor_for("games")?;
     create_link(
         games_anchor,
@@ -138,35 +135,28 @@ pub fn create_game(game: Game) -> ExternResult<Record> {
         (),
     )?;
     
-    // Coordinator-level validations.
+    // Coordinator validations.
     if !player_exists(&game.player_1)? {
         return Err(wasm_error!(WasmErrorInner::Guest("Player 1 is not a registered player".into())));
     }
-    // Only validate player2 if it is Some.
     if let Some(player2) = &game.player_2 {
         if !player_exists(player2)? {
             return Err(wasm_error!(WasmErrorInner::Guest("Player 2 is not a registered player".into())));
         }
-        // Ensure that player1 and player2 are not the same.
         if game.player_1 == *player2 {
             return Err(wasm_error!(WasmErrorInner::Guest("Player 1 and Player 2 cannot be the same agent".into())));
         }
-        // Check if player2 is in an ongoing game.
         if is_player_in_ongoing_game(player2)? {
             return Err(wasm_error!(WasmErrorInner::Guest("Player 2 is already in an ongoing game".into())));
         }
     }
-    
-    // Always check if player1 is in an ongoing game.
     if is_player_in_ongoing_game(&game.player_1)? {
         return Err(wasm_error!(WasmErrorInner::Guest("Player 1 is already in an ongoing game".into())));
     }
-    
     if game.game_status != GameStatus::Waiting {
         return Err(wasm_error!(WasmErrorInner::Guest("Newly created games must have status 'Waiting'".into())));
     }
     
-    // Retrieve and return the created record.
     let record = get(game_hash.clone(), GetOptions::default())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("Could not find the newly created Game".to_string())))?;
     Ok(record)
@@ -415,4 +405,81 @@ pub struct GameUpdateData {
     pub player_2_paddle: u32,
     pub ball_x: u32,
     pub ball_y: u32,
+}
+
+// Online presence for connected users
+
+#[hdk_extern]
+pub fn publish_presence(_: ()) -> ExternResult<ActionHash> {
+    // Get current agent and time
+    let agent = agent_info()?.agent_latest_pubkey;
+    let now = sys_time()?.as_millis() as u64;
+    let presence = Presence {
+        agent_pubkey: agent,
+        timestamp: now,
+    };
+    // Create the Presence entry
+    let presence_hash = create_entry(&EntryTypes::Presence(presence))?;
+    // Create a link from a global "presence" anchor.
+    let presence_anchor = anchor_for("presence")?;
+    create_link(
+        presence_anchor,
+        presence_hash.clone(),
+        LinkTypes::Presence,
+        (),
+    )?;
+    Ok(presence_hash)
+}
+
+#[hdk_extern]
+pub fn get_online_users(_: ()) -> ExternResult<Vec<AgentPubKey>> {
+    let presence_anchor = anchor_for("presence")?;
+    let links = get_links(
+        GetLinksInputBuilder::try_new(presence_anchor, LinkTypes::Presence)?
+            .build(),
+    )?;
+    let mut online_agents: Vec<AgentPubKey> = Vec::new();
+    // Define a cutoff: here we consider an agent online if their presence was published within the last 10 seconds.
+    let cutoff = (sys_time()?.as_millis() as u64).saturating_sub(30_000);
+    for link in links {
+        if let Some(action_hash) = link.target.into_action_hash() {
+            if let Some(details) = get_details(action_hash, GetOptions::default())? {
+                if let Details::Record(record_details) = details {
+                    let maybe_presence: Option<Presence> = record_details
+                        .record
+                        .entry()
+                        .to_app_option()
+                        .map_err(|e| wasm_error!(WasmErrorInner::Serialize(e)) )?;
+                    if let Some(presence) = maybe_presence {
+                        if presence.timestamp >= cutoff {
+                            online_agents.push(presence.agent_pubkey);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    // Remove duplicates.
+    online_agents.sort();
+    online_agents.dedup();
+    Ok(online_agents)
+}
+
+#[hdk_extern]
+pub fn send_invitation(invitation: Invitation) -> ExternResult<()> {
+    // Emit an invitation signal so that the invitee sees it.
+    emit_signal(Signal::GameInvitation {
+        game_id: invitation.game_id,
+        inviter: invitation.inviter,
+        message: invitation.message,
+    })?;
+    Ok(())
+}
+
+// Define the Invitation struct.
+#[derive(Serialize, Deserialize, Debug, Clone, SerializedBytes)]
+pub struct Invitation {
+    pub game_id: ActionHash,
+    pub inviter: AgentPubKey,
+    pub message: String,
 }
