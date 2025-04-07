@@ -1,87 +1,53 @@
+// ping_2_pong/dnas/ping_2_pong/zomes/coordinator/ping_2_pong/src/player.rs
 use hdk::prelude::*;
 use ping_2_pong_integrity::*;
+use crate::utils::anchor_for; // Assuming anchor_for is accessible
 
-
-// Helper function to check if a player name is unique
+// Helper function to check if a player name is unique using the PlayerNameToPlayer link
 pub fn is_player_name_unique(player_name: &str) -> ExternResult<bool> {
-    // Use an anchor for all players rather than ().
-    let base = anchor_for("players")?;
-    let player_links = get_links(
-        GetLinksInputBuilder::try_new(base, LinkTypes::PlayerToPlayers)?.build(),
+    let name_anchor = anchor_for(&player_name.to_lowercase())?;
+    let links = get_links(
+        GetLinksInputBuilder::try_new(name_anchor, LinkTypes::PlayerNameToPlayer)?
+            .build(),
     )?;
-    
-    for link in player_links {
-        let player_hash = link.target.into_action_hash().ok_or(
-            wasm_error!(WasmErrorInner::Guest("Invalid player hash".to_string())),
-        )?;
-        let player_record = get(player_hash, GetOptions::default())?
-            .ok_or(wasm_error!(WasmErrorInner::Guest(
-                "Player record not found".to_string()
-            )))?;
-        // IMPORTANT: Convert to Player (not Game)
-        if let Some(existing_player) = player_record
-            .entry()
-            .to_app_option::<Player>()
-            .map_err(|e| wasm_error!(WasmErrorInner::Serialize(e)))?
-        {
-            if existing_player.player_name.to_lowercase() == player_name.to_lowercase() {
-                return Ok(false);
-            }
-        }
-    }
-    
-    Ok(true)
+    Ok(links.is_empty())
 }
 
 #[hdk_extern]
 pub fn create_player(player: Player) -> ExternResult<Record> {
-    // Check if player_name is unique
+    // --- Validations ---
+     let my_pub_key = agent_info()?.agent_latest_pubkey;
+     if player.player_key != my_pub_key {
+         return Err(wasm_error!(WasmErrorInner::Guest("Player profile can only be created by the player themselves".into())));
+     }
     if !is_player_name_unique(&player.player_name)? {
-        return Err(wasm_error!(WasmErrorInner::Guest(
-            "Player name must be unique".into(),
-        )));
+        return Err(wasm_error!(WasmErrorInner::Guest(format!( "Player name '{}' is already taken", player.player_name ))));
     }
+     let existing_links = get_links(
+        GetLinksInputBuilder::try_new(player.player_key.clone(), LinkTypes::PlayerToPlayers)?.build(),
+     )?;
+     if !existing_links.is_empty() {
+         return Err(wasm_error!(WasmErrorInner::Guest("Player profile already exists for this agent".into())));
+     }
+    // --- End Validations ---
 
-    let player_hash = create_entry(&EntryTypes::Player(player.clone()))?;
-    create_link(
-        player.player_key.clone(),
-        player_hash.clone(),
-        LinkTypes::PlayerToPlayers,
-        (),
-    )?;
+    let player_action_hash = create_entry(&EntryTypes::Player(player.clone()))?;
+    create_link( player.player_key.clone(), player_action_hash.clone(), LinkTypes::PlayerToPlayers, (), )?;
+    let name_anchor = anchor_for(&player.player_name.to_lowercase())?;
+    create_link( name_anchor, player_action_hash.clone(), LinkTypes::PlayerNameToPlayer, (), )?;
 
-    // Create a link from player_name to player entry for quick lookup
-    create_link(
-        ping_2_pong_integrity::anchor_for(&player.player_name.to_lowercase())?,
-        player_hash.clone(),
-        LinkTypes::PlayerNameToPlayer,
-        (),
-    )?;
-    
-    let record = get(player_hash.clone(), GetOptions::default())?.ok_or(wasm_error!(
-        WasmErrorInner::Guest("Could not find the newly created Player".to_string())
-    ))?;
+    let record = get(player_action_hash.clone(), GetOptions::default())?.ok_or(wasm_error!( WasmErrorInner::Guest("Could not find the newly created Player".to_string()) ))?;
     Ok(record)
 }
 
+// --- Other Player CRUD functions ---
+
 #[hdk_extern]
 pub fn get_latest_player(original_player_hash: ActionHash) -> ExternResult<Option<Record>> {
-    let links = get_links(
-        GetLinksInputBuilder::try_new(original_player_hash.clone(), LinkTypes::PlayerUpdates)?
-            .build(),
-    )?;
-    let latest_link = links
-        .into_iter()
-        .max_by(|link_a, link_b| link_a.timestamp.cmp(&link_b.timestamp));
+    let links = get_links( GetLinksInputBuilder::try_new(original_player_hash.clone(), LinkTypes::PlayerUpdates)?.build(), )?;
+    let latest_link = links .into_iter() .max_by(|a, b| a.timestamp.cmp(&b.timestamp));
     let latest_player_hash = match latest_link {
-        Some(link) => {
-            link.target
-                .clone()
-                .into_action_hash()
-                .ok_or(wasm_error!(WasmErrorInner::Guest(
-                    "No action hash associated with link".to_string()
-                )))?
-        }
+        Some(link) => link.target.clone().into_action_hash() .ok_or(wasm_error!(WasmErrorInner::Guest( "No action hash associated with link".to_string() )))?,
         None => original_player_hash.clone(),
     };
     get(latest_player_hash, GetOptions::default())
@@ -89,44 +55,27 @@ pub fn get_latest_player(original_player_hash: ActionHash) -> ExternResult<Optio
 
 #[hdk_extern]
 pub fn get_original_player(original_player_hash: ActionHash) -> ExternResult<Option<Record>> {
-    let Some(details) = get_details(original_player_hash, GetOptions::default())? else {
-        return Ok(None);
-    };
+    let Some(details) = get_details(original_player_hash, GetOptions::default())? else { return Ok(None); };
     match details {
         Details::Record(details) => Ok(Some(details.record)),
-        _ => Err(wasm_error!(WasmErrorInner::Guest(
-            "Malformed get details response".to_string()
-        ))),
+        _ => Err(wasm_error!(WasmErrorInner::Guest( "Malformed get details response".to_string() ))),
     }
 }
 
 #[hdk_extern]
 pub fn get_all_revisions_for_player(original_player_hash: ActionHash) -> ExternResult<Vec<Record>> {
-    let Some(original_record) = get_original_player(original_player_hash.clone())? else {
-        return Ok(vec![]);
+    let Some(original_record) = get_original_player(original_player_hash.clone())? else { return Ok(vec![]); };
+    let links = get_links( GetLinksInputBuilder::try_new(original_player_hash.clone(), LinkTypes::PlayerUpdates)?.build(), )?;
+    let get_input: Vec<GetInput> = links .into_iter() .map(|link| { Ok(GetInput::new( link.target .into_action_hash() .ok_or(wasm_error!(WasmErrorInner::Guest( "No action hash associated with link".to_string() )))? .into(), GetOptions::default(), )) }) .collect::<ExternResult<Vec<GetInput>>>()?;
+    if get_input.is_empty() { return Ok(vec![original_record]); }
+    let records_result = HDK.with(|hdk| hdk.borrow().get(get_input));
+     let records = match records_result {
+      Ok(records) => records,
+      Err(e) => return Err(wasm_error!(WasmErrorInner::Guest(format!("Failed to get records: {:?}", e))))
     };
-    let links = get_links(
-        GetLinksInputBuilder::try_new(original_player_hash.clone(), LinkTypes::PlayerUpdates)?
-            .build(),
-    )?;
-    let get_input: Vec<GetInput> = links
-        .into_iter()
-        .map(|link| {
-            Ok(GetInput::new(
-                link.target
-                    .into_action_hash()
-                    .ok_or(wasm_error!(WasmErrorInner::Guest(
-                        "No action hash associated with link".to_string()
-                    )))?
-                    .into(),
-                GetOptions::default(),
-            ))
-        })
-        .collect::<ExternResult<Vec<GetInput>>>()?;
-    let records = HDK.with(|hdk| hdk.borrow().get(get_input))?;
-    let mut records: Vec<Record> = records.into_iter().flatten().collect();
-    records.insert(0, original_record);
-    Ok(records)
+    let mut revision_records: Vec<Record> = records.into_iter().flatten().collect();
+    revision_records.insert(0, original_record);
+    Ok(revision_records)
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -138,101 +87,87 @@ pub struct UpdatePlayerInput {
 
 #[hdk_extern]
 pub fn update_player(input: UpdatePlayerInput) -> ExternResult<Record> {
-    let updated_player_hash =
-        update_entry(input.previous_player_hash.clone(), &input.updated_player)?;
-    create_link(
-        input.original_player_hash.clone(),
-        updated_player_hash.clone(),
-        LinkTypes::PlayerUpdates,
-        (),
-    )?;
-    let record = get(updated_player_hash.clone(), GetOptions::default())?.ok_or(wasm_error!(
-        WasmErrorInner::Guest("Could not find the newly updated Player".to_string())
-    ))?;
+     let my_pub_key = agent_info()?.agent_latest_pubkey;
+     let original_record = get(input.original_player_hash.clone(), GetOptions::default())? .ok_or(wasm_error!(WasmErrorInner::Guest("Original Player record not found".into())))?;
+
+     // FIX: Use map_err before '?' for to_app_option
+     let original_player = original_record.entry().to_app_option::<Player>()
+         .map_err(|e| wasm_error!(WasmErrorInner::Guest(format!("Deserialization error: {:?}", e))))? // Map SerializedBytesError
+         .ok_or(wasm_error!(WasmErrorInner::Guest("Malformed original Player entry (None)".into())))?; // Handle Option::None
+
+     if original_player.player_key != my_pub_key {
+         return Err(wasm_error!(WasmErrorInner::Guest("Cannot update another player's profile".into())));
+     }
+     if input.updated_player.player_name != original_player.player_name {
+         if !is_player_name_unique(&input.updated_player.player_name)? {
+             return Err(wasm_error!(WasmErrorInner::Guest(format!( "New player name '{}' is already taken", input.updated_player.player_name ))));
+         }
+         warn!("Player name change detected, but PlayerNameToPlayer link update is not implemented.");
+     }
+
+    let updated_player_hash = update_entry(input.previous_player_hash.clone(), &input.updated_player)?;
+    create_link( input.original_player_hash.clone(), updated_player_hash.clone(), LinkTypes::PlayerUpdates, (), )?;
+    let record = get(updated_player_hash.clone(), GetOptions::default())?.ok_or(wasm_error!( WasmErrorInner::Guest("Could not find the newly updated Player".to_string()) ))?;
     Ok(record)
 }
 
 #[hdk_extern]
 pub fn delete_player(original_player_hash: ActionHash) -> ExternResult<ActionHash> {
-    let details = get_details(original_player_hash.clone(), GetOptions::default())?.ok_or(
-        wasm_error!(WasmErrorInner::Guest("Player not found".to_string())),
-    )?;
-    let record = match details {
-        Details::Record(details) => Ok(details.record),
-        _ => Err(wasm_error!(WasmErrorInner::Guest(
-            "Malformed get details response".to_string()
-        ))),
-    }?;
-    let entry = record
-        .entry()
-        .as_option()
-        .ok_or(wasm_error!(WasmErrorInner::Guest(
-            "Player record has no entry".to_string()
-        )))?;
-    let player = <Player>::try_from(entry)?;
-    let links = get_links(
-        GetLinksInputBuilder::try_new(player.player_key.clone(), LinkTypes::PlayerToPlayers)?
-            .build(),
-    )?;
-    for link in links {
-        if let Some(action_hash) = link.target.into_action_hash() {
-            if action_hash == original_player_hash {
-                delete_link(link.create_link_hash)?;
-            }
-        }
+    let my_pub_key = agent_info()?.agent_latest_pubkey;
+    let details = get_details(original_player_hash.clone(), GetOptions::default())?.ok_or( wasm_error!(WasmErrorInner::Guest("Player not found".to_string())), )?;
+    let record = match details { Details::Record(details) => details.record, _ => return Err(wasm_error!(WasmErrorInner::Guest( "Malformed get details response".to_string() ))), };
+
+    // FIX: Use map_err before '?' for to_app_option
+    let player = record.entry().to_app_option::<Player>()
+        .map_err(|e| wasm_error!(WasmErrorInner::Guest(format!("Deserialization error: {:?}", e))))? // Map SerializedBytesError
+        .ok_or(wasm_error!(WasmErrorInner::Guest("Player record has no entry (None)".to_string())))?; // Handle Option::None
+
+    if player.player_key != my_pub_key {
+        return Err(wasm_error!(WasmErrorInner::Guest("Cannot delete another player's profile".into())));
     }
+
+    // Delete links
+    let links_agent = get_links( GetLinksInputBuilder::try_new(player.player_key.clone(), LinkTypes::PlayerToPlayers)?.build(), )?;
+    for link in links_agent { if let Some(action_hash) = link.target.into_action_hash() { if action_hash == original_player_hash { delete_link(link.create_link_hash)?; } } }
+    let name_anchor = anchor_for(&player.player_name.to_lowercase())?;
+    let links_name = get_links( GetLinksInputBuilder::try_new(name_anchor, LinkTypes::PlayerNameToPlayer)?.build(), )?;
+     for link in links_name { if let Some(action_hash) = link.target.into_action_hash() { if action_hash == original_player_hash { delete_link(link.create_link_hash)?; } } }
+
+    // Delete entry
     delete_entry(original_player_hash)
 }
 
 #[hdk_extern]
-pub fn get_all_deletes_for_player(
-    original_player_hash: ActionHash,
-) -> ExternResult<Option<Vec<SignedActionHashed>>> {
-    let Some(details) = get_details(original_player_hash, GetOptions::default())? else {
-        return Ok(None);
-    };
-    match details {
-        Details::Entry(_) => Err(wasm_error!(WasmErrorInner::Guest(
-            "Malformed details".into()
-        ))),
-        Details::Record(record_details) => Ok(Some(record_details.deletes)),
-    }
+pub fn get_all_deletes_for_player( original_player_hash: ActionHash, ) -> ExternResult<Option<Vec<SignedActionHashed>>> {
+    let Some(details) = get_details(original_player_hash, GetOptions::default())? else { return Ok(None); };
+    match details { Details::Entry(_) => Err(wasm_error!(WasmErrorInner::Guest("Malformed details".into()))), Details::Record(record_details) => Ok(Some(record_details.deletes)), }
 }
 
 #[hdk_extern]
-pub fn get_oldest_delete_for_player(
-    original_player_hash: ActionHash,
-) -> ExternResult<Option<SignedActionHashed>> {
-    let Some(mut deletes) = get_all_deletes_for_player(original_player_hash)? else {
-        return Ok(None);
-    };
-    deletes.sort_by(|delete_a, delete_b| {
-        delete_a
-            .action()
-            .timestamp()
-            .cmp(&delete_b.action().timestamp())
-    });
+pub fn get_oldest_delete_for_player( original_player_hash: ActionHash, ) -> ExternResult<Option<SignedActionHashed>> {
+    let Some(mut deletes) = get_all_deletes_for_player(original_player_hash)? else { return Ok(None); };
+    deletes.sort_by(|a, b| a.action().timestamp().cmp(&b.action().timestamp()));
     Ok(deletes.first().cloned())
 }
 
 #[hdk_extern]
-pub fn get_players_for_player(player: AgentPubKey) -> ExternResult<Vec<Link>> {
-    get_links(GetLinksInputBuilder::try_new(player, LinkTypes::PlayerToPlayers)?.build())
+pub fn get_player_profile_hash_for_agent(player_agent_key: AgentPubKey) -> ExternResult<Vec<Link>> {
+    get_links(GetLinksInputBuilder::try_new(player_agent_key, LinkTypes::PlayerToPlayers)?.build())
 }
 
 #[hdk_extern]
-pub fn get_deleted_players_for_player(
-    player: AgentPubKey,
-) -> ExternResult<Vec<(SignedActionHashed, Vec<SignedActionHashed>)>> {
-    let details = get_link_details(
-        player,
-        LinkTypes::PlayerToPlayers,
-        None,
-        GetOptions::default(),
-    )?;
-    Ok(details
-        .into_inner()
-        .into_iter()
-        .filter(|(_link, deletes)| !deletes.is_empty())
-        .collect())
+pub fn get_deleted_player_links_for_agent( player_agent_key: AgentPubKey, ) -> ExternResult<Vec<(SignedActionHashed, Vec<SignedActionHashed>)>> {
+    let details = get_link_details( player_agent_key, LinkTypes::PlayerToPlayers, None, GetOptions::default(), )?;
+    Ok(details .into_inner() .into_iter() .filter(|(_, deletes)| !deletes.is_empty()) .collect())
+}
+
+#[hdk_extern]
+pub fn get_player_by_name(player_name: String) -> ExternResult<Option<Record>> {
+    let name_anchor = anchor_for(&player_name.to_lowercase())?;
+    let links = get_links( GetLinksInputBuilder::try_new(name_anchor, LinkTypes::PlayerNameToPlayer)?.build(), )?;
+    if let Some(link) = links.into_iter().next() {
+        if let Some(action_hash) = link.target.into_action_hash() {
+            get_original_player(action_hash)
+        } else { Ok(None) }
+    } else { Ok(None) }
 }

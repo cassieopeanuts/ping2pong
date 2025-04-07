@@ -1,238 +1,171 @@
+// ping_2_pong/dnas/ping_2_pong/zomes/coordinator/ping_2_pong/src/score.rs
 use hdk::prelude::*;
 use ping_2_pong_integrity::*;
+use crate::utils::get_game_hash_by_id; // Use helper
+use ping_2_pong_integrity::game::GameStatus;
 
 // Maximum allowed score points.
-const MAX_POINTS: u32 = 10000;
+const MAX_POINTS: u32 = 10000; // Keep high for flexibility, game logic enforces 10
 
 #[hdk_extern]
 pub fn create_score(score: Score) -> ExternResult<Record> {
-    // Ensure the game_id exists and retrieve its ActionHash.
-    let game_hash = match get_game_hash_by_id(&score.game_id)? {
-        Some(hash) => hash,
-        None => return Err(wasm_error!(WasmErrorInner::Guest("Game ID does not exist".into()))),
-    };
+    // --- Validation ---
+    // Ensure the game_id corresponds to an actual Game entry
+    // Note: game_id in Score struct should be the original ActionHash of the game creation
+    let game_action_hash = get_game_hash_by_id(&score.game_id)?
+        .ok_or(wasm_error!(WasmErrorInner::Guest(format!("Game ID does not exist: {}", score.game_id))))?;
 
-    // Fetch the Game record.
-    let game_record = get(game_hash, GetOptions::default())?
+    // Fetch the *latest* game state record to check status
+    let game_record = crate::game::get_latest_game(game_action_hash)?
         .ok_or(wasm_error!(WasmErrorInner::Guest("Game record not found".into())))?;
     let game = game_record
         .entry()
         .to_app_option::<Game>()
         .map_err(|e| wasm_error!(WasmErrorInner::Serialize(e)))?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("Invalid Game entry".into())))?;
+        .ok_or(wasm_error!(WasmErrorInner::Guest("Invalid Game entry format".into())))?;
 
-    // Ensure the game is active (InProgress or Finished).
-    match game.game_status {
-        GameStatus::InProgress | GameStatus::Finished => (),
-        _ => return Err(wasm_error!(WasmErrorInner::Guest("Game is not active".into()))),
+    // Ensure the game status is Finished before recording score
+    if game.game_status != GameStatus::Finished {
+        return Err(wasm_error!(WasmErrorInner::Guest("Scores can only be recorded for 'Finished' games".into())));
     }
 
-    // Ensure the score is being assigned to a player in the game.
-    if score.player != game.player_1
-    && match &game.player_2 {
-        Some(p2) => score.player != *p2,
-        None => true,
-    }
-{
-    return Err(wasm_error!(WasmErrorInner::Guest(
-        "Score must be assigned to a player in the game".into()
-    )));
-}
-
-    // Validate that the score points are within the acceptable range.
-    if score.player_points > MAX_POINTS {
+    // Ensure the score is being assigned to a player who was actually in the game.
+    if score.player != game.player_1 && game.player_2.as_ref() != Some(&score.player) {
         return Err(wasm_error!(WasmErrorInner::Guest(
-            "Player points exceed the maximum allowed".into()
+            "Score must be assigned to a player who participated in the game".into()
         )));
     }
 
-    // Create the Score entry.
-    let score_hash = create_entry(&EntryTypes::Score(score.clone()))?;
+    // Ensure caller is one of the players in the game? Or allow anyone to record score?
+    // Let's allow anyone for now, assuming UI calls this after game ends for both players.
+    // let my_pub_key = agent_info()?.agent_latest_pubkey;
+    // if my_pub_key != game.player_1 && game.player_2.as_ref() != Some(&my_pub_key) {
+    //     return Err(wasm_error!(WasmErrorInner::Guest("Only game participants can record the score".into())));
+    // }
 
-    // Link the Score to the Player.
+
+    // Validate that the score points are within a reasonable range.
+    if score.player_points > MAX_POINTS { // MAX_POINTS is high, maybe check against game win condition?
+        warn!("Score points {} exceed MAX_POINTS {}", score.player_points, MAX_POINTS);
+        // Allow high scores for now, UI/game logic should enforce game rules like first to 10.
+        // return Err(wasm_error!(WasmErrorInner::Guest("Player points exceed the maximum allowed".into())));
+    }
+     if score.player_points > 100 { // Add a more reasonable sanity check
+         warn!("Recorded score {} seems high.", score.player_points);
+     }
+     // --- End Validation ---
+
+
+    // Create the Score entry.
+    let score_action_hash = create_entry(&EntryTypes::Score(score.clone()))?;
+
+    // Link the Score action hash from the Player's pubkey.
     create_link(
         score.player.clone(),
-        score_hash.clone(),
-        LinkTypes::ScoreToPlayer,
+        score_action_hash.clone(),
+        LinkTypes::PlayerToScores, // Changed from ScoreToPlayer based on convention BaseToTargets
         (),
     )?;
 
-    // Link the Score to the original game.
+    // Link the Score action hash from the original game's action hash.
     create_link(
-        score.game_id.clone(),
-        score_hash.clone(),
-        LinkTypes::ScoreUpdates,
+        score.game_id.clone(), // Base is the original game action hash
+        score_action_hash.clone(),
+        LinkTypes::GameToScores, // Use a more descriptive name if possible, or reuse ScoreUpdates? Let's define GameToScores
+        // LinkTypes::ScoreUpdates, // ScoreUpdates implies linking Score revisions, not linking *to* a score.
         (),
     )?;
 
     // Retrieve and return the created Score record.
-    let record = get(score_hash, GetOptions::default())?
+    let record = get(score_action_hash.clone(), GetOptions::default())?
         .ok_or(wasm_error!(WasmErrorInner::Guest("Could not find the newly created Score".to_string())))?;
     Ok(record)
 }
 
+// --- Other Score CRUD functions ---
+// get_latest_score/get_original_score/update_score etc. rely on ScoreUpdates links.
+// The create_score now uses GameToScores. If updates to scores are needed,
+// we might need ScoreUpdates links from the original Score action hash.
+// Let's assume Scores are immutable for now, matching the design intent (record final score).
+// We can remove update/delete score functions if scores are immutable.
+
 #[hdk_extern]
-pub fn get_latest_score(original_score_hash: ActionHash) -> ExternResult<Option<Record>> {
+pub fn get_scores_for_game(game_id: ActionHash) -> ExternResult<Vec<Record>> {
+    // Ensure game_id is valid first? Optional.
+     let _ = get_game_hash_by_id(&game_id)?
+         .ok_or(wasm_error!(WasmErrorInner::Guest(format!("Game ID does not exist: {}", game_id))))?;
+
+
     let links = get_links(
-        GetLinksInputBuilder::try_new(original_score_hash.clone(), LinkTypes::ScoreUpdates)?
+        GetLinksInputBuilder::try_new(game_id, LinkTypes::GameToScores)? // Use the new link type
             .build(),
     )?;
-    let latest_link = links
+
+    let get_inputs: Vec<GetInput> = links
         .into_iter()
-        .max_by(|link_a, link_b| link_a.timestamp.cmp(&link_b.timestamp));
-    let latest_score_hash = match latest_link {
-        Some(link) => {
-            link.target
-                .clone()
-                .into_action_hash()
-                .ok_or(wasm_error!(WasmErrorInner::Guest(
-                    "No action hash associated with link".to_string()
-                )))?
-        }
-        None => original_score_hash.clone(),
-    };
-    get(latest_score_hash, GetOptions::default())
-}
+        .filter_map(|link| link.target.into_action_hash())
+        .map(|ah| GetInput::new(ah.into(), GetOptions::default()))
+        .collect();
 
-#[hdk_extern]
-pub fn get_original_score(original_score_hash: ActionHash) -> ExternResult<Option<Record>> {
-    let Some(details) = get_details(original_score_hash, GetOptions::default())? else {
-        return Ok(None);
-    };
-    match details {
-        Details::Record(details) => Ok(Some(details.record)),
-        _ => Err(wasm_error!(WasmErrorInner::Guest("Malformed get details response".to_string()))),
-    }
-}
-
-#[hdk_extern]
-pub fn get_all_revisions_for_score(original_score_hash: ActionHash) -> ExternResult<Vec<Record>> {
-    let Some(original_record) = get_original_score(original_score_hash.clone())? else {
+    if get_inputs.is_empty() {
         return Ok(vec![]);
-    };
-    let links = get_links(
-        GetLinksInputBuilder::try_new(original_score_hash.clone(), LinkTypes::ScoreUpdates)?
-            .build(),
-    )?;
-    let get_input: Vec<GetInput> = links
-        .into_iter()
-        .map(|link| {
-            Ok(GetInput::new(
-                link.target
-                    .into_action_hash()
-                    .ok_or(wasm_error!(WasmErrorInner::Guest(
-                        "No action hash associated with link".to_string()
-                    )))?
-                    .into(),
-                GetOptions::default(),
-            ))
-        })
-        .collect::<ExternResult<Vec<GetInput>>>()?;
-    let records = HDK.with(|hdk| hdk.borrow().get(get_input))?;
-    let mut records: Vec<Record> = records.into_iter().flatten().collect();
-    records.insert(0, original_record);
-    Ok(records)
+    }
+
+    let records = HDK.with(|hdk| hdk.borrow().get(get_inputs))?;
+    Ok(records.into_iter().flatten().collect())
 }
+
+
+#[hdk_extern]
+pub fn get_scores_for_player(player: AgentPubKey) -> ExternResult<Vec<Record>> {
+    let links = get_links(
+        GetLinksInputBuilder::try_new(player, LinkTypes::PlayerToScores)? // Correct link type
+            .build()
+    )?;
+
+     let get_inputs: Vec<GetInput> = links
+        .into_iter()
+        .filter_map(|link| link.target.into_action_hash())
+        .map(|ah| GetInput::new(ah.into(), GetOptions::default()))
+        .collect();
+
+    if get_inputs.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let records = HDK.with(|hdk| hdk.borrow().get(get_inputs))?;
+    Ok(records.into_iter().flatten().collect())
+}
+
+
+// REMOVE functions related to Score updates and deletes if score is immutable post-creation
+/*
+#[hdk_extern]
+pub fn get_latest_score(original_score_hash: ActionHash) -> ExternResult<Option<Record>> { ... }
+
+#[hdk_extern]
+pub fn get_original_score(original_score_hash: ActionHash) -> ExternResult<Option<Record>> { ... }
+
+#[hdk_extern]
+pub fn get_all_revisions_for_score(original_score_hash: ActionHash) -> ExternResult<Vec<Record>> { ... }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct UpdateScoreInput {
-    pub original_score_hash: ActionHash,
-    pub previous_score_hash: ActionHash,
-    pub updated_score: Score,
-}
+pub struct UpdateScoreInput { ... }
 
 #[hdk_extern]
-pub fn update_score(input: UpdateScoreInput) -> ExternResult<Record> {
-    let updated_score_hash = update_entry(input.previous_score_hash.clone(), &input.updated_score)?;
-    create_link(
-        input.original_score_hash.clone(),
-        updated_score_hash.clone(),
-        LinkTypes::ScoreUpdates,
-        (),
-    )?;
-    let record = get(updated_score_hash.clone(), GetOptions::default())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("Could not find the newly updated Score".to_string())))?;
-    Ok(record)
-}
+pub fn update_score(input: UpdateScoreInput) -> ExternResult<Record> { ... }
 
 #[hdk_extern]
-pub fn delete_score(original_score_hash: ActionHash) -> ExternResult<ActionHash> {
-    let details = get_details(original_score_hash.clone(), GetOptions::default())?
-        .ok_or(wasm_error!(WasmErrorInner::Guest("Score not found".to_string())))?;
-    let record = match details {
-        Details::Record(details) => Ok(details.record),
-        _ => Err(wasm_error!(WasmErrorInner::Guest("Malformed get details response".to_string()))),
-    }?;
-    let entry = record
-        .entry()
-        .as_option()
-        .ok_or(wasm_error!(WasmErrorInner::Guest("Score record has no entry".to_string())))?;
-    let score = <Score>::try_from(entry)?;
-    let links = get_links(
-        GetLinksInputBuilder::try_new(score.player.clone(), LinkTypes::PlayerToScores)?.build(),
-    )?;
-    for link in links {
-        if let Some(action_hash) = link.target.into_action_hash() {
-            if action_hash == original_score_hash {
-                delete_link(link.create_link_hash)?;
-            }
-        }
-    }
-    delete_entry(original_score_hash)
-}
+pub fn delete_score(original_score_hash: ActionHash) -> ExternResult<ActionHash> { ... }
 
 #[hdk_extern]
-pub fn get_all_deletes_for_score(original_score_hash: ActionHash) -> ExternResult<Option<Vec<SignedActionHashed>>> {
-    let Some(details) = get_details(original_score_hash, GetOptions::default())? else {
-        return Ok(None);
-    };
-    match details {
-        Details::Entry(_) => Err(wasm_error!(WasmErrorInner::Guest("Malformed details".into()))),
-        Details::Record(record_details) => Ok(Some(record_details.deletes)),
-    }
-}
+pub fn get_all_deletes_for_score(original_score_hash: ActionHash) -> ExternResult<Option<Vec<SignedActionHashed>>> { ... }
 
 #[hdk_extern]
-pub fn get_oldest_delete_for_score(original_score_hash: ActionHash) -> ExternResult<Option<SignedActionHashed>> {
-    let Some(mut deletes) = get_all_deletes_for_score(original_score_hash)? else {
-        return Ok(None);
-    };
-    deletes.sort_by(|delete_a, delete_b| delete_a.action().timestamp().cmp(&delete_b.action().timestamp()));
-    Ok(deletes.first().cloned())
-}
+pub fn get_oldest_delete_for_score(original_score_hash: ActionHash) -> ExternResult<Option<SignedActionHashed>> { ... }
 
 #[hdk_extern]
-pub fn get_scores_for_player(player: AgentPubKey) -> ExternResult<Vec<Link>> {
-    get_links(GetLinksInputBuilder::try_new(player, LinkTypes::PlayerToScores)?.build())
-}
+pub fn get_deleted_scores_for_player(player: AgentPubKey) -> ExternResult<Vec<(SignedActionHashed, Vec<SignedActionHashed>)>> { ... }
+*/
 
-#[hdk_extern]
-pub fn get_deleted_scores_for_player(player: AgentPubKey) -> ExternResult<Vec<(SignedActionHashed, Vec<SignedActionHashed>)>> {
-    let details = get_link_details(
-        player,
-        LinkTypes::PlayerToScores,
-        None,
-        GetOptions::default(),
-    )?;
-    Ok(details.into_inner().into_iter().filter(|(_link, deletes)| !deletes.is_empty()).collect())
-}
-
-// Helper function to get game hash by game_id.
-fn get_game_hash_by_id(game_id: &ActionHash) -> ExternResult<Option<ActionHash>> {
-    // Since the game_id is now the game’s entry hash,
-    // we simply try to retrieve the link from the global "games" anchor.
-    let games_anchor = crate::utils::anchor_for("games")?;
-    let links = get_links(
-        GetLinksInputBuilder::try_new(games_anchor, LinkTypes::GameIdToGame)?
-            .build(),
-    )?;
-    for link in links {
-        if let Some(hash) = link.target.into_action_hash() {
-            // If the provided game_id equals this hash, return it.
-            if &hash == game_id {
-                return Ok(Some(hash));
-            }
-        }
-    }
-    Ok(None)
-}
+// get_game_hash_by_id was removed (now in utils)

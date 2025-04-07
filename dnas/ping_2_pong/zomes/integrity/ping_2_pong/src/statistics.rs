@@ -1,64 +1,19 @@
-use hdi::prelude::*;
+// ping_2_pong/dnas/ping_2_pong/zomes/integrity/ping_2_pong/src/statistics.rs
 use hdk::prelude::*;
 
-#[derive(Clone, PartialEq)]
+// Statistics entry recorded after a game finishes.
 #[hdk_entry_helper]
+#[derive(Clone, PartialEq)]
 pub struct Statistics {
-    pub game_id: ActionHash,
-    pub signal_latency: u32,
-    pub score_validation_time: u32,
-    pub dht_response_time: u32,
-    pub network_delay: u32,
-    pub timestamp: Timestamp,
-}
+    pub game_id: ActionHash, // Links back to the original Game create action
+    pub timestamp: Timestamp, // When stats were recorded
 
-pub fn validate_create_statistics(
-    _action: EntryCreationAction,
-    _statistics: Statistics,
-) -> ExternResult<ValidateCallbackResult> {
-
-    Ok(ValidateCallbackResult::Valid)
-}
-
-
-pub fn validate_update_statistics(
-    _action: Update,
-    _statistics: Statistics,
-    _original_action: EntryCreationAction,
-    _original_statistics: Statistics,
-) -> ExternResult<ValidateCallbackResult> {
-    // TODO: add the appropriate validation rules
-    Ok(ValidateCallbackResult::Valid)
-}
-
-pub fn validate_delete_statistics(
-    _action: Delete,
-    _original_action: EntryCreationAction,
-    _original_statistics: Statistics,
-) -> ExternResult<ValidateCallbackResult> {
-    // TODO: add the appropriate validation rules
-    Ok(ValidateCallbackResult::Valid)
-}
-
-pub fn validate_create_link_statistics_updates(
-    _action: CreateLink,
-    _base_address: AnyLinkableHash,
-    _target_address: AnyLinkableHash,
-    _tag: LinkTag,
-) -> ExternResult<ValidateCallbackResult> {
-
-    // TODO: add the appropriate validation rules
-    Ok(ValidateCallbackResult::Valid)
-}
-
-pub fn validate_delete_link_statistics_updates(
-    _action: DeleteLink,
-    _original_action: CreateLink,
-    _base: AnyLinkableHash,
-    _target: AnyLinkableHash,
-    _tag: LinkTag,
-) -> ExternResult<ValidateCallbackResult> {
-    Ok(ValidateCallbackResult::Invalid(
-        "StatisticsUpdates links cannot be deleted".to_string(),
-    ))
+    // Example metrics (measured client-side, validated server-side for sanity)
+    pub signal_latency: u32, // e.g., average round-trip signal time in ms
+    // Consider renaming or removing this if DHT validation time isn't relevant/measurable
+    pub score_validation_time: u32, // Time for score entry to be validated/committed? (Hard to measure) - RENAME? -> post_game_commit_time?
+    pub dht_response_time: u32, // Average time for DHT gets? (Client measured)
+    pub network_delay: u32, // Estimated network RTT? (Client measured)
+                              // Could add player-specific stats here? Or make separate entries per player?
+                              // pub player_stats: Vec<PlayerGameStats>,
 }
