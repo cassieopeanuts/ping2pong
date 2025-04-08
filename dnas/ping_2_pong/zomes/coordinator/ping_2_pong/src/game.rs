@@ -59,55 +59,72 @@ pub fn get_player_status(player_pub_key: AgentPubKey) -> ExternResult<PlayerStat
 }
 
 
+// --- NEW: Input struct for create_game ---
+#[derive(Serialize, Deserialize, Debug)]
+pub struct CreateGameInput {
+    pub player_1: AgentPubKey,
+    pub player_2: Option<AgentPubKey>, // Allow UI to specify player 2 (e.g., for invites)
+    // Add any other fields UI *must* provide, if any.
+}
+
 #[hdk_extern]
-pub fn create_game(mut game: Game) -> ExternResult<Record> {
+// FIX: Change function signature to accept CreateGameInput
+pub fn create_game(input: CreateGameInput) -> ExternResult<Record> {
     let my_pub_key = agent_info()?.agent_latest_pubkey;
-    if game.player_1 != my_pub_key {
-         if game.player_2.as_ref() != Some(&my_pub_key) {
-              return Err(wasm_error!(WasmErrorInner::Guest("Game creator must be one of the players".into())));
-         }
+
+    // Validate input consistency (e.g., player_1 matches input or caller?)
+    // The creator should be one of the players involved.
+    if input.player_1 != my_pub_key && input.player_2.as_ref() != Some(&my_pub_key) {
+        return Err(wasm_error!(WasmErrorInner::Guest("Game creator must be one of the players specified in the input".into())));
     }
 
-    // Set required fields server-side
-    game.created_at = sys_time()?;
-    game.game_status = GameStatus::Waiting; // Use imported GameStatus
-    game.player_1_paddle = 250;
-    game.player_2_paddle = 250;
-    game.ball_x = 400;
-    game.ball_y = 300;
-
-    // --- Perform Validations BEFORE creating entry ---
-    if !player_exists(&game.player_1)? {
+    // --- Perform Validations BEFORE constructing/creating entry ---
+    // Use input fields for validation
+    if !player_exists(&input.player_1)? {
         return Err(wasm_error!(WasmErrorInner::Guest("Player 1 is not a registered player".into())));
     }
-    if let Some(player2) = &game.player_2 {
+    if let Some(player2) = &input.player_2 {
         if !player_exists(player2)? {
             return Err(wasm_error!(WasmErrorInner::Guest("Player 2 is not a registered player".into())));
         }
-        if game.player_1 == *player2 {
+        if input.player_1 == *player2 {
             return Err(wasm_error!(WasmErrorInner::Guest("Player 1 and Player 2 cannot be the same agent".into())));
         }
         if is_player_in_ongoing_game(player2)? {
             return Err(wasm_error!(WasmErrorInner::Guest("Player 2 is already in an ongoing game".into())));
         }
     }
-    if is_player_in_ongoing_game(&game.player_1)? {
+    if is_player_in_ongoing_game(&input.player_1)? {
         return Err(wasm_error!(WasmErrorInner::Guest("Player 1 is already in an ongoing game".into())));
     }
     // --- End Validations ---
 
-    // Create the Game entry.
-    let game_action_hash = create_entry(&EntryTypes::Game(game.clone()))?;
 
-    // Link from player1 pubkey to game action hash
+    // FIX: Construct the full Game object here
+    let game = Game {
+        player_1: input.player_1.clone(),
+        player_2: input.player_2.clone(),
+        created_at: sys_time()?, // Set timestamp server-side
+        game_status: GameStatus::Waiting, // Default initial status
+        // Set default paddle/ball positions
+        player_1_paddle: 250,
+        player_2_paddle: 250,
+        ball_x: 400,
+        ball_y: 300,
+    };
+
+    // Create the Game entry using the constructed object.
+    let game_action_hash = create_entry(&EntryTypes::Game(game.clone()))?; // Clone game for linking if needed
+
+    // Link the game action hash from player1's pubkey.
     create_link(
-        game.player_1.clone(),
+        game.player_1.clone(), // Use game.player_1 now
         game_action_hash.clone(),
         LinkTypes::Player1ToGames,
         (),
     )?;
 
-    // Link from player2 pubkey if exists
+    // Link player2 only if provided in the constructed game object.
     if let Some(player2) = game.player_2.clone() {
         create_link(
             player2,
@@ -117,11 +134,11 @@ pub fn create_game(mut game: Game) -> ExternResult<Record> {
         )?;
     }
 
-    // Link from global "games" anchor hash to game action hash
-    let games_anchor_hash = anchor_for("games")?; // This is AnyLinkableHash(EntryHash)
+    // Link from global "games" anchor to the game action hash.
+    let games_anchor_hash = anchor_for("games")?;
     create_link(
         games_anchor_hash,
-        game_action_hash.clone(), // Target must be AnyLinkableHash(ActionHash)
+        game_action_hash.clone(),
         LinkTypes::GameIdToGame,
         (),
     )?;
@@ -132,6 +149,7 @@ pub fn create_game(mut game: Game) -> ExternResult<Record> {
 
     Ok(record)
 }
+
 
 // get_latest_game (No changes needed)
 #[hdk_extern]

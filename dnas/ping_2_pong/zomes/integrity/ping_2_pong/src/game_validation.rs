@@ -1,7 +1,9 @@
 // ping_2_pong/dnas/ping_2_pong/zomes/integrity/ping_2_pong/src/game_validation.rs
 use hdk::prelude::*;
 use crate::game::{Game, GameStatus};
-use std::time::Duration;
+// Use core::time::Duration for stability if hdk::prelude::Duration is problematic
+use core::time::Duration;
+// Import Add/Sub traits for Timestamp arithmetic
 use std::ops::{Add, Sub};
 
 // Validate creation of a Game entry.
@@ -11,14 +13,11 @@ pub fn validate_create_game(
 ) -> ExternResult<ValidateCallbackResult> {
     // 1. Check Author: Ensure the creator is Player 1 or Player 2 (if specified).
     let author = action.action().author();
+    // Allow Player 2 to create only if they are specified in the entry
     if game.player_1 != *author && game.player_2.as_ref() != Some(author) {
-         // Allow creation if player 2 is set AND player 2 is the author?
-         // Coordinator check handles this, but add integrity rule too.
-         if !(game.player_2.is_some() && game.player_2.as_ref() == Some(author)) {
-            return Ok(ValidateCallbackResult::Invalid(
-                "Game creator must be Player 1 (or Player 2 if specified)".to_string(),
-            ));
-         }
+         return Ok(ValidateCallbackResult::Invalid(
+             "Game creator must be Player 1 or Player 2 specified in the entry".to_string(),
+         ));
     }
 
     // 2. Check Initial Status: Must be 'Waiting'.
@@ -55,30 +54,19 @@ pub fn validate_create_game(
              "Game created_at timestamp is too far from action timestamp".to_string()
          ));
      }
-     
+
     Ok(ValidateCallbackResult::Valid)
 }
 
 // Validate updating a Game entry.
+// FIX: Accept original_game as argument, remove internal get
 pub fn validate_update_game(
     action: &SignedActionHashed, // Action performing the update
     updated_game: Game,          // The proposed new state of the game entry
+    original_game: &Game,        // The original state (passed in from validate callback)
 ) -> ExternResult<ValidateCallbackResult> {
 
-    // 1. Get Original Game State: Retrieve the entry state being updated.
-    let original_record = must_get_valid_record(action.action().prev_action().ok_or(wasm_error!(
-        WasmErrorInner::Guest(
-            "Update action must have a prev_action field".to_string()
-        )
-    ))?.clone())?;
-    // <-- FIX: Extract Entry from RecordEntry before TryFrom
-    let original_entry = match original_record.entry() {
-        RecordEntry::Present(entry) => entry.clone(), // Clone the entry if present
-        _ => return Ok(ValidateCallbackResult::Invalid(
-            "Original record for game update does not contain a present entry".to_string()
-        ))
-    };
-    let original_game = Game::try_from(original_entry)?; // Now try_from Entry
+    // --- Use the passed-in original_game ---
 
     // 2. Check Author: Only players involved can update game status.
     let author = action.action().author();
@@ -104,53 +92,45 @@ pub fn validate_update_game(
          || updated_game.ball_x != original_game.ball_x
          || updated_game.ball_y != original_game.ball_y
      {
-          if updated_game.game_status != GameStatus::Finished { // Allow final state snapshot only when finishing
+          // Allow snapshot only if transitioning TO Finished
+          if updated_game.game_status == GameStatus::Finished && original_game.game_status != GameStatus::Finished {
+               warn!("Allowing update to paddle/ball positions as game transitions to Finished state.");
+               // Allow the update in this specific transition case
+          } else if updated_game.game_status == GameStatus::Finished && original_game.game_status == GameStatus::Finished {
+               // Prevent updates if already finished (even if status isn't changing)
+                return Ok(ValidateCallbackResult::Invalid(
+                    "Cannot update paddle/ball positions on an already Finished game".to_string(),
+                ));
+          }
+           else {
+                // Disallow updates in any other status
                 return Ok(ValidateCallbackResult::Invalid(
                     "Cannot update paddle/ball positions via DHT entry update (use signals)".to_string(),
                 ));
-          } else {
-              if original_game.game_status == GameStatus::Finished {
-                   return Ok(ValidateCallbackResult::Invalid(
-                        "Cannot update paddle/ball positions on an already Finished game".to_string(),
-                    ));
-              }
-              warn!("Allowing update to paddle/ball positions as game transitions to Finished state.");
           }
      }
 
 
     // 5. Check Status Transitions: Define allowed state changes.
     match (&original_game.game_status, &updated_game.game_status) {
-        // Waiting -> InProgress (Player 2 joins or accepts invite)
         (GameStatus::Waiting, GameStatus::InProgress) => {
              if updated_game.player_2.is_none() {
                  return Ok(ValidateCallbackResult::Invalid("Cannot transition to InProgress without Player 2 being set".into()));
              }
+             // Note: Further checks like "Is author Player 2?" could be added, but might be overly restrictive
+             // depending on how the coordinator handles player joining.
         },
-        // InProgress -> Finished (Game ends)
         (GameStatus::InProgress, GameStatus::Finished) => { /* Allow */ },
-         // Allow Finished -> Finished? (Maybe redundant update?)
-         (GameStatus::Finished, GameStatus::Finished) => {
-              warn!("Redundant update: Game status is already Finished.");
-               if updated_game.player_1_paddle != original_game.player_1_paddle
-                 || updated_game.player_2_paddle != original_game.player_2_paddle
-                 || updated_game.ball_x != original_game.ball_x
-                 || updated_game.ball_y != original_game.ball_y
-                {
-                    return Ok(ValidateCallbackResult::Invalid(
-                        "Cannot update paddle/ball positions on an already Finished game (redundant update)".to_string(),
-                    ));
-                }
-         },
-        // Waiting -> Waiting (e.g., updating some metadata if allowed - currently none) - Disallow for now
-        (GameStatus::Waiting, GameStatus::Waiting) => return Ok(ValidateCallbackResult::Invalid("No valid updates allowed for 'Waiting' game status".into())),
-         // InProgress -> InProgress (e.g., pause/resume? Not defined) - Disallow for now
-         (GameStatus::InProgress, GameStatus::InProgress) => return Ok(ValidateCallbackResult::Invalid("No valid updates allowed for 'InProgress' game status".into())),
-        // All other transitions are invalid
+        (GameStatus::Finished, GameStatus::Finished) => { /* Allow redundant Finished update (checked above for pos changes) */ },
+        // Any other transition is invalid
+        (from, to) if from == to => { // Allow updating *within* same state ONLY if position snapshot logic above passed (i.e., state is Finished)
+             if updated_game.game_status != GameStatus::Finished {
+                  return Ok(ValidateCallbackResult::Invalid(format!("No valid updates allowed while game status remains {:?}", from)));
+             }
+             // If status is Finished and remains Finished, allow (position change already checked)
+        },
         (from, to) => {
-            return Ok(ValidateCallbackResult::Invalid(format!(
-                "Invalid game status transition from {:?} to {:?}", from, to
-            )));
+            return Ok(ValidateCallbackResult::Invalid(format!( "Invalid game status transition from {:?} to {:?}", from, to )));
         }
     }
 
@@ -158,6 +138,7 @@ pub fn validate_update_game(
 }
 
 // Validate deleting a Game entry.
+// Signature matches call from lib.rs where original_game is deserialized first
 pub fn validate_delete_game(
     action: &SignedActionHashed, // Action performing the delete
     original_game: Game,         // The game state being deleted
@@ -171,7 +152,7 @@ pub fn validate_delete_game(
         ));
     }
 
-    // 2. Check Status: Only allow deleting 'Waiting' games (e.g., unaccepted invite, abandoned matchmaking).
+    // 2. Check Status: Only allow deleting 'Waiting' games
     if original_game.game_status != GameStatus::Waiting {
         return Ok(ValidateCallbackResult::Invalid(
             "Only games in 'Waiting' status can be deleted".to_string(),
@@ -182,9 +163,5 @@ pub fn validate_delete_game(
 }
 
 
-// Helper to get a record or return Invalid
-fn must_get_valid_record(action_hash: ActionHash) -> ExternResult<Record> {
-    get(action_hash.clone(), GetOptions::default())?.ok_or(wasm_error!(
-        WasmErrorInner::Guest(format!("Record not found: {}", action_hash))
-    ))
-}
+// FIX: Remove helper function that uses `get`
+// fn must_get_valid_record(action_hash: ActionHash) -> ExternResult<Record> { ... }

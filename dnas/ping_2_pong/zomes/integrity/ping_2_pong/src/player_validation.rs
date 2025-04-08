@@ -14,43 +14,27 @@ pub fn validate_create_player(
         ));
     }
 
-    // 2. Check Name: Must not be empty.
-    // Uniqueness is checked via PlayerNameToPlayer links and coordinator logic,
-    // but basic non-empty check here.
+    // 2. Check Name: Must not be empty and within length limits.
     if player.player_name.trim().is_empty() {
         return Ok(ValidateCallbackResult::Invalid("Player name cannot be empty".to_string()));
     }
-    // Max length check?
     if player.player_name.len() > 50 {
          return Ok(ValidateCallbackResult::Invalid("Player name is too long (max 50 chars)".to_string()));
     }
 
-
-    // 3. Check Agent Existence: Ensure the agent key is valid (usually implicitly true if they authored).
-    // let agent_info = must_get_agent_info(player.player_key.clone())?; // Could add this check
+    // Note: Uniqueness is handled by coordinator before calling create_entry
 
     Ok(ValidateCallbackResult::Valid)
 }
 
 // Validate updating a Player entry.
+// FIX: Accept original_player as argument, remove internal get
 pub fn validate_update_player(
     action: &SignedActionHashed,
     updated_player: Player,
+    original_player: &Player, // The original state (passed in)
 ) -> ExternResult<ValidateCallbackResult> {
-     // 1. Get Original Player State
-     let original_record = must_get_valid_record(action.action().prev_action().ok_or(wasm_error!(
-        WasmErrorInner::Guest("Update action must have a prev_action field".to_string())
-    ))?.clone())?;
-    
-     // <-- FIX: Extract Entry from RecordEntry before TryFrom
-    let original_entry = match original_record.entry() {
-        RecordEntry::Present(entry) => entry.clone(), // Clone the entry if present
-        _ => return Ok(ValidateCallbackResult::Invalid(
-            "Original record for player update does not contain a present entry".to_string()
-        ))
-    };
-    let original_player = Player::try_from(original_entry)?; // Now try_from Entry
-
+    // --- Use the passed-in original_player instead of fetching ---
 
     // 2. Check Author: Must be the player themselves.
     if original_player.player_key != *action.action().author() {
@@ -67,9 +51,6 @@ pub fn validate_update_player(
     }
 
     // 4. Check Name Validity (if changed): Non-empty, length limits.
-    // Integrity rules CANNOT easily enforce uniqueness on update because it requires
-    // checking for *other* players' links/names. Coordinator must handle uniqueness checks
-    // and potentially manage updating the PlayerNameToPlayer link if name changes are allowed.
     if updated_player.player_name != original_player.player_name {
         if updated_player.player_name.trim().is_empty() {
             return Ok(ValidateCallbackResult::Invalid("Updated player name cannot be empty".to_string()));
@@ -77,6 +58,8 @@ pub fn validate_update_player(
          if updated_player.player_name.len() > 50 {
              return Ok(ValidateCallbackResult::Invalid("Updated player name is too long (max 50 chars)".to_string()));
          }
+         // Note: Uniqueness checks for the new name MUST happen in the coordinator zome
+         // before calling update_entry. Integrity zome cannot verify uniqueness across DHT.
          warn!("Player name changed. Uniqueness check relies on coordinator logic and PlayerNameToPlayer link management.");
     }
 
@@ -84,9 +67,10 @@ pub fn validate_update_player(
 }
 
 // Validate deleting a Player entry.
+// Signature matches call from lib.rs where original_player is deserialized first
 pub fn validate_delete_player(
     action: &SignedActionHashed,
-    original_player: Player,
+    original_player: Player, // Passed directly now
 ) -> ExternResult<ValidateCallbackResult> {
     // 1. Check Author: Must be the player themselves.
     if original_player.player_key != *action.action().author() {
@@ -95,15 +79,8 @@ pub fn validate_delete_player(
         ));
     }
 
-    // TODO: Consider implications. Should deleting profile prevent future play? Or just remove name?
-    // For now, allow deletion by the owner.
-
     Ok(ValidateCallbackResult::Valid)
 }
 
-// Helper (takes ActionHash by value now)
-fn must_get_valid_record(action_hash: ActionHash) -> ExternResult<Record> {
-     get(action_hash.clone(), GetOptions::default())?.ok_or(wasm_error!(
-        WasmErrorInner::Guest(format!("Record not found: {}", action_hash))
-    ))
-}
+// FIX: Remove helper function that uses `get`
+// fn must_get_valid_record(action_hash: ActionHash) -> ExternResult<Record> { ... }
