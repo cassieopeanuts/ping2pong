@@ -67,6 +67,108 @@ pub struct CreateGameInput {
     // Add any other fields UI *must* provide, if any.
 }
 
+
+// --- NEW FUNCTION: join_game ---
+#[hdk_extern]
+pub fn join_game(original_game_hash: ActionHash) -> ExternResult<Record> {
+    let caller_pubkey = agent_info()?.agent_latest_pubkey;
+    debug!("Agent {:?} attempting to join game {:?}", caller_pubkey, original_game_hash);
+
+    // 1. Get the latest state of the game record
+    let latest_game_record_option = get_latest_game(original_game_hash.clone())?;
+    let latest_game_record = match latest_game_record_option {
+        Some(record) => record,
+        None => return Err(wasm_error!(WasmErrorInner::Guest(format!(
+            "Cannot join game: Game record not found for original hash {:?}", original_game_hash
+        )))),
+    };
+
+    // Extract current game state and the hash of the action we are updating
+    let previous_action_hash = latest_game_record.action_hashed().hash.clone();
+    let entry = latest_game_record.entry().as_option()
+        .ok_or(wasm_error!(WasmErrorInner::Guest("Latest game record for join has no entry".to_string())))?
+        .clone();
+    let current_game = Game::try_from(entry)?;
+
+    // 2. Validate if joining is allowed
+    if current_game.game_status != GameStatus::Waiting {
+        return Err(wasm_error!(WasmErrorInner::Guest(format!(
+            "Cannot join game: Game status is not 'Waiting', it's {:?}", current_game.game_status
+        ))));
+    }
+    if current_game.player_2.is_some() {
+        return Err(wasm_error!(WasmErrorInner::Guest("Cannot join game: Player 2 slot is already taken".into())));
+    }
+    if current_game.player_1 == caller_pubkey {
+        return Err(wasm_error!(WasmErrorInner::Guest("Cannot join game: Player 1 cannot join their own game as Player 2".into())));
+    }
+     // Check if the caller (Player 2) is already in another ongoing game
+    if is_player_in_ongoing_game(&caller_pubkey)? {
+         return Err(wasm_error!(WasmErrorInner::Guest("Cannot join game: You are already in another ongoing game".into())));
+    }
+     // Ensure player profile exists for the joiner
+     if !player_exists(&caller_pubkey)? {
+        return Err(wasm_error!(WasmErrorInner::Guest("Cannot join game: Joining player does not have a profile".into())));
+     }
+
+
+    // 3. Prepare the updated game state
+    let updated_game = Game {
+        player_1: current_game.player_1.clone(),
+        player_2: Some(caller_pubkey.clone()), // Assign caller as Player 2
+        game_status: GameStatus::InProgress, // Change status
+        created_at: current_game.created_at, // Keep original timestamp
+        // Keep original default positions (or update if needed)
+        player_1_paddle: current_game.player_1_paddle,
+        player_2_paddle: current_game.player_2_paddle,
+        ball_x: current_game.ball_x,
+        ball_y: current_game.ball_y,
+    };
+
+    // 4. Commit the update
+    debug!("Updating game entry {:?} to add player 2 and set status InProgress", previous_action_hash);
+    let update_action_hash = update_entry(previous_action_hash.clone(), &updated_game)?;
+    debug!("Game entry updated with action hash {:?}", update_action_hash);
+
+    // 5. Create the link for Player 2 -> Game
+    // Link from the joining player (caller) to the *original* game hash
+    create_link(
+        caller_pubkey.clone(),
+        original_game_hash.clone(), // Link to the original action hash
+        LinkTypes::Player2ToGames,
+        (),
+    )?;
+    debug!("Created Player2ToGames link for agent {:?}", caller_pubkey);
+
+    // 6. Create the GameUpdates link (from original to this update)
+     create_link(
+        original_game_hash.clone(),
+        update_action_hash.clone(),
+        LinkTypes::GameUpdates,
+        (),
+    )?;
+    debug!("Created GameUpdates link from {:?} to {:?}", original_game_hash, update_action_hash);
+
+    // 7. (Optional) Emit signal to notify Player 1
+    let opponent_pubkey = current_game.player_1; // Player 1 is the opponent of the joiner
+    let signal = Signal::GameStarted { // Need to define GameStarted in Signal enum
+        game_id: original_game_hash.clone(),
+        opponent: opponent_pubkey.clone(), // Let P1 know who joined
+    };
+    // Requires defining GameStarted variant in Signal enum in lib.rs
+    emit_signal(&signal)?; // Emit signal (consider error handling if needed)
+    debug!("Emitted GameStarted signal");
+
+
+    // 8. Fetch and return the latest record (representing the update action)
+    let final_record = get(update_action_hash.clone(), GetOptions::default())?
+        .ok_or(wasm_error!(WasmErrorInner::Guest(format!(
+            "Could not find the updated Game record after join: {:?}", update_action_hash
+        ))))?;
+
+    Ok(final_record)
+}
+
 #[hdk_extern]
 // FIX: Change function signature to accept CreateGameInput
 pub fn create_game(input: CreateGameInput) -> ExternResult<Record> {

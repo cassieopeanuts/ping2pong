@@ -28,6 +28,10 @@ pub enum Signal {
         inviter: AgentPubKey,
         message: String,
     },
+    GameStarted {
+        game_id: ActionHash,
+        opponent: AgentPubKey, // The pubkey of the other player in the game
+    },
 }
 
 #[hdk_extern(infallible)]

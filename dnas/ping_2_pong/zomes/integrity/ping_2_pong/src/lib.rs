@@ -1,5 +1,6 @@
 // ping_2_pong/dnas/ping_2_pong/zomes/integrity/ping_2_pong/src/lib.rs
 use hdk::prelude::*;
+use hdi::prelude::*;
 
 // Import entry definitions
 pub mod game;
@@ -236,18 +237,17 @@ fn validate_player1_to_game_link(create_link: &CreateLink) -> ExternResult<Valid
     Ok(ValidateCallbackResult::Valid)
 }
 
+// In integrity/lib.rs
 fn validate_player2_to_game_link(create_link: &CreateLink) -> ExternResult<ValidateCallbackResult> {
-    // Base Check: Must be an AgentPubKey
-    let base_agent = create_link.base_address.clone().into_agent_pub_key()
+    // 1. Base Check: Must be an AgentPubKey
+    let _base_agent = create_link.base_address.clone().into_agent_pub_key() // Changed to _base_agent as it's not used in checks now
          .ok_or(wasm_error!(WasmErrorInner::Guest("Player2ToGames base must be an AgentPubKey".into())))?;
-    // Target Check: Must be ActionHash
+    // 2. Target Check: Must be ActionHash
     if create_link.target_address.clone().into_action_hash().is_none() {
          return Ok(ValidateCallbackResult::Invalid("Player2ToGames target must be an ActionHash".into()));
     }
-    // Author Check: Must be the Agent from the base address
-     if create_link.author != base_agent {
-         return Ok(ValidateCallbackResult::Invalid("Author of Player2ToGames link must be Player 2".into()));
-    }
+    // 3. REMOVED Author Check: Allow P1 to create this link during invitation/game setup
+    // if create_link.author != base_agent { ... }
     Ok(ValidateCallbackResult::Valid)
 }
 

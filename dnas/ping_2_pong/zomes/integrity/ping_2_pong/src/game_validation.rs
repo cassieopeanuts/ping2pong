@@ -59,79 +59,78 @@ pub fn validate_create_game(
 }
 
 // Validate updating a Game entry.
-// FIX: Accept original_game as argument, remove internal get
 pub fn validate_update_game(
-    action: &SignedActionHashed, // Action performing the update
-    updated_game: Game,          // The proposed new state of the game entry
-    original_game: &Game,        // The original state (passed in from validate callback)
+    action: &SignedActionHashed,
+    updated_game: Game,
+    original_game: &Game,
 ) -> ExternResult<ValidateCallbackResult> {
 
-    // --- Use the passed-in original_game ---
-
-    // 2. Check Author: Only players involved can update game status.
     let author = action.action().author();
-    if original_game.player_1 != *author && original_game.player_2.as_ref() != Some(author) {
-        return Ok(ValidateCallbackResult::Invalid(
-            "Only game participants can update the game status".to_string(),
-        ));
+
+    // --- Author Check ---
+    // Allow update if:
+    // 1. Author is Player 1
+    // 2. Author is the (existing) Player 2
+    // 3. Game is Waiting->InProgress AND Author is the NEW Player 2 being added
+    let is_player1 = original_game.player_1 == *author;
+    let is_existing_player2 = original_game.player_2.as_ref() == Some(author);
+    let is_new_player2_joining = original_game.game_status == GameStatus::Waiting
+                                 && updated_game.game_status == GameStatus::InProgress
+                                 && updated_game.player_2.as_ref() == Some(author);
+
+    if !is_player1 && !is_existing_player2 && !is_new_player2_joining {
+         return Ok(ValidateCallbackResult::Invalid(
+             "Update author must be Player 1, existing Player 2, or new Player 2 joining a Waiting game".to_string(),
+         ));
     }
 
-    // 3. Check Immutability: Ensure critical fields are not changed.
+    // --- Immutability Check ---
     if updated_game.player_1 != original_game.player_1
-        || updated_game.player_2 != original_game.player_2
         || updated_game.created_at != original_game.created_at
+        // Allow player_2 to change ONLY when going from Waiting -> InProgress
+        || (updated_game.player_2 != original_game.player_2 && !(original_game.game_status == GameStatus::Waiting && updated_game.game_status == GameStatus::InProgress))
     {
         return Ok(ValidateCallbackResult::Invalid(
-            "Cannot change player_1, player_2, or created_at on game update".to_string(),
+            "Cannot change player_1, created_at, or player_2 (except when joining)".to_string(),
         ));
     }
+    // Ensure if player_2 changed, it went from None to Some
+     if updated_game.player_2 != original_game.player_2 {
+          if original_game.player_2.is_some() || updated_game.player_2.is_none() {
+                return Ok(ValidateCallbackResult::Invalid("Player 2 can only be changed from None to Some when joining".into()));
+          }
+          // Also check the author was the new player 2 (already covered by author check above)
+     }
 
-     // 4. PREVENT Real-time State Updates via DHT: Paddle/ball positions should not be updated here.
+
+     // --- Prevent Real-time State Updates via DHT ---
      if updated_game.player_1_paddle != original_game.player_1_paddle
          || updated_game.player_2_paddle != original_game.player_2_paddle
          || updated_game.ball_x != original_game.ball_x
          || updated_game.ball_y != original_game.ball_y
      {
-          // Allow snapshot only if transitioning TO Finished
           if updated_game.game_status == GameStatus::Finished && original_game.game_status != GameStatus::Finished {
                warn!("Allowing update to paddle/ball positions as game transitions to Finished state.");
-               // Allow the update in this specific transition case
           } else if updated_game.game_status == GameStatus::Finished && original_game.game_status == GameStatus::Finished {
-               // Prevent updates if already finished (even if status isn't changing)
-                return Ok(ValidateCallbackResult::Invalid(
-                    "Cannot update paddle/ball positions on an already Finished game".to_string(),
-                ));
-          }
-           else {
-                // Disallow updates in any other status
-                return Ok(ValidateCallbackResult::Invalid(
-                    "Cannot update paddle/ball positions via DHT entry update (use signals)".to_string(),
-                ));
+                return Ok(ValidateCallbackResult::Invalid( "Cannot update paddle/ball positions on an already Finished game".to_string() ));
+          } else {
+                return Ok(ValidateCallbackResult::Invalid( "Cannot update paddle/ball positions via DHT entry update (use signals)".to_string() ));
           }
      }
 
-
-    // 5. Check Status Transitions: Define allowed state changes.
+    // --- Status Transitions Check ---
     match (&original_game.game_status, &updated_game.game_status) {
         (GameStatus::Waiting, GameStatus::InProgress) => {
-             if updated_game.player_2.is_none() {
-                 return Ok(ValidateCallbackResult::Invalid("Cannot transition to InProgress without Player 2 being set".into()));
-             }
-             // Note: Further checks like "Is author Player 2?" could be added, but might be overly restrictive
-             // depending on how the coordinator handles player joining.
+             if updated_game.player_2.is_none() { return Ok(ValidateCallbackResult::Invalid("Cannot transition to InProgress without Player 2 being set".into())); }
+             // Check author IS the new player 2 (already covered by refined author check)
+             // if updated_game.player_2.as_ref() != Some(author) { return Ok(ValidateCallbackResult::Invalid("Join must be performed by Player 2".into())); }
         },
         (GameStatus::InProgress, GameStatus::Finished) => { /* Allow */ },
-        (GameStatus::Finished, GameStatus::Finished) => { /* Allow redundant Finished update (checked above for pos changes) */ },
-        // Any other transition is invalid
-        (from, to) if from == to => { // Allow updating *within* same state ONLY if position snapshot logic above passed (i.e., state is Finished)
-             if updated_game.game_status != GameStatus::Finished {
-                  return Ok(ValidateCallbackResult::Invalid(format!("No valid updates allowed while game status remains {:?}", from)));
-             }
-             // If status is Finished and remains Finished, allow (position change already checked)
-        },
-        (from, to) => {
-            return Ok(ValidateCallbackResult::Invalid(format!( "Invalid game status transition from {:?} to {:?}", from, to )));
-        }
+        (GameStatus::Finished, GameStatus::Finished) => { /* Allow */ },
+        // Disallow other transitions explicitly for clarity
+        (GameStatus::Waiting, GameStatus::Waiting) => return Ok(ValidateCallbackResult::Invalid("No valid updates allowed for 'Waiting' game status".into())),
+        (GameStatus::InProgress, GameStatus::InProgress) => return Ok(ValidateCallbackResult::Invalid("No valid updates allowed for 'InProgress' game status".into())),
+        (from, to) => { return Ok(ValidateCallbackResult::Invalid(format!( "Invalid game status transition from {:?} to {:?}", from, to ))); }
     }
 
     Ok(ValidateCallbackResult::Valid)

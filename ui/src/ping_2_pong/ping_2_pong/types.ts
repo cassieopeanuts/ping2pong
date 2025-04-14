@@ -33,17 +33,9 @@ export enum LinkTypes {
     Presence = 'Presence',
 }
 
-// As defined in coordinator/game.rs
-export type PlayerStatus =
-  | { type: 'Available'; }
-  | { type: 'InGame'; };
-
-// As defined in integrity/game.rs
-export type GameStatus =
-  | { type: 'Waiting'; }
-  | { type: 'InProgress'; }
-  | { type: 'Finished'; };
-
+// FIX: Change to string literal unions to match default Serde enum serialization
+export type PlayerStatus = 'Available' | 'InGame';
+export type GameStatus = 'Waiting' | 'InProgress' | 'Finished';
 
 // --- SIGNAL TYPES ---
 

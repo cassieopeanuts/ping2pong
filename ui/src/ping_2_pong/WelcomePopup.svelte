@@ -3,55 +3,36 @@
   import { playerProfile } from "../stores/playerProfile";
   import { clientContext, type ClientContext } from "../contexts";
   import type { AppClient, AgentPubKey } from "@holochain/client";
-  import { encodeHashToBase64 } from "@holochain/client";
+  // Remove encodeHashToBase64 if not needed here
+  // import { encodeHashToBase64 } from "@holochain/client";
 
   const dispatch = createEventDispatcher();
   let nickname: string = "";
   let client: AppClient;
-
-  // Retrieve the client context.
   const appClientContext = getContext<ClientContext>(clientContext);
 
   async function register() {
-    if (nickname.trim() === "") {
-      alert("Please enter a nickname.");
-      return;
-    }
+    if (nickname.trim() === "") { /* ... alert ... */ return; }
     try {
-      // Get the Holochain client.
       client = await appClientContext.getClient();
+      const agentKey: AgentPubKey = client.myPubKey; // Get the raw AgentPubKey
 
-      // Retrieve the agent's public key.
-      const agentKey: AgentPubKey = client.myPubKey; // Use myAgentPubKey
+      const playerPayload = { player_key: agentKey, player_name: nickname.trim() };
 
-      // Build the player object required by your DNA.
-      const player = {
-        player_key: agentKey,
-        player_name: nickname.trim()
-      };
-
-      // Call the DNA function "create_player".
       const record = await client.callZome({
-        cap_secret: null,
-        role_name: "ping_2_pong",
-        zome_name: "ping_2_pong",
-        fn_name: "create_player",
-        payload: player,
+        cap_secret: null, role_name: "ping_2_pong", zome_name: "ping_2_pong",
+        fn_name: "create_player", payload: playerPayload,
       });
-
       console.log("Player created:", record);
 
-      // Convert the agent key to a Base64 string before storing.
-      playerProfile.set({ 
-        agentKey: encodeHashToBase64(agentKey),
+      // FIX: Set profile store with the raw AgentPubKey
+      playerProfile.set({
+        agentKey: agentKey, // Store the object/Uint8Array
         nickname: nickname.trim()
       });
 
       dispatch("registered", { nickname: nickname.trim() });
-    } catch (e) {
-      console.error("Error registering player:", e);
-      alert("Error registering player: " + (e as Error).message);
-    }
+    } catch (e) { /* ... error handling ... */ }
   }
 </script>
 

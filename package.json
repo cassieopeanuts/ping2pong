@@ -28,5 +28,8 @@
   },
   "hcScaffold": {
     "template": "svelte"
+  },
+  "dependencies": {
+    "@msgpack/msgpack": "^3.1.1"
   }
 }
