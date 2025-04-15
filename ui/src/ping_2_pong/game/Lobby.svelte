@@ -133,53 +133,57 @@
   }
 
   // Executed when "Invite" button is clicked
+
   async function sendInvitation(invitee: AgentPubKey) {
-      invitationError = null;
-      if (!client) { invitationError = "Holochain client not ready."; return; }
-    try {
-      // 1. Create the game entry
-      console.log("Creating game for invitation to:", encodeHashToBase64(invitee));
-      const createPayload = { player_1: client.myPubKey, player_2: invitee };
-      // FIX: Provide full arguments to callZome
-      const gameRecord: Record = await client.callZome({
-          cap_secret: null,
-          role_name: "ping_2_pong", // Add role_name
-          zome_name: "ping_2_pong", // Add zome_name
-          fn_name: "create_game",   // Add fn_name
-          payload: createPayload
-      });
-      const gameHash: ActionHash = gameRecord.signed_action.hashed.hash;
-      console.log("Game created for invitation:", gameHash);
-
-      // 2. Prepare the invitation payload (matches backend Invitation struct fields)
-      // Using 'object' type assertion assuming BackendInvitationPayload is just { game_id, inviter, message }
-      const invitationPayload: object = {
-        game_id: gameHash,
-        inviter: client.myPubKey,
-        message: "You have been invited to play Pong!",
-      };
-      // 3. Construct signal payload (matches GameInvitationSignal type)
-      const signalPayload = { type: "GameInvitation", ...invitationPayload };
-
-      // 4. Send the signal
-      console.log("Sending invitation signal...");
-       // FIX: Provide full arguments to callZome
-      await client.callZome({
+    invitationError = null;
+    if (!client) { invitationError = "Holochain client not ready."; return; }
+  try {
+    // 1. Create the game entry (keep this part)
+    console.log("Creating game for invitation to:", encodeHashToBase64(invitee));
+    const createPayload = { player_1: client.myPubKey, player_2: invitee };
+    const gameRecord: Record = await client.callZome({
         cap_secret: null,
-        role_name: "ping_2_pong", // Add role_name
-        zome_name: "ping_2_pong", // Add zome_name
-        fn_name: "send_signal",   // Add fn_name
-        payload: signalPayload
-      });
-      console.log("Invitation signal sent.");
+        role_name: "ping_2_pong",
+        zome_name: "ping_2_pong",
+        fn_name: "create_game",
+        payload: createPayload
+    });
+    const gameHash: ActionHash = gameRecord.signed_action.hashed.hash;
+    console.log("Game created for invitation:", encodeHashToBase64(gameHash)); // Log encoded hash
 
-      // 5. Inviter joins the game immediately
-      dispatch("join-game", { gameHash: gameHash });
-    } catch (e) {
-        console.error("Error sending invitation:", e);
-        invitationError = (e as HolochainError).message;
-    }
+    // 2. Prepare the invitation payload (matches backend Invitation struct)
+    // Explicitly type payload for clarity (optional but good practice)
+    const invitationPayload: {
+        game_id: ActionHash;
+        inviter: AgentPubKey;
+        message: string;
+    } = {
+      game_id: gameHash,
+      inviter: client.myPubKey,
+      message: "You have been invited to play Pong!",
+    };
+
+    // 3. Send the invitation using the correct function and payload
+    console.log("Sending invitation...");
+    await client.callZome({
+      cap_secret: null,
+      role_name: "ping_2_pong",
+      zome_name: "ping_2_pong",
+      fn_name: "send_invitation",   // <<<--- FIX: Use the correct function name
+      payload: invitationPayload    // <<<--- FIX: Send the Invitation object directly
+    });
+    console.log("Invitation sent.");
+
+    // 4. Inviter joins the game immediately (keep this part)
+    dispatch("join-game", { gameHash: gameHash });
+
+  } catch (e) {
+      console.error("Error sending invitation:", e);
+      // Check if error has 'data' property for more backend info
+      const errorData = (e as any)?.data?.data;
+      invitationError = errorData ? `${(e as Error).message}: ${errorData}` : (e as Error).message;
   }
+}
 
   // Periodically publish presence
   // MOVED TO App.svelte

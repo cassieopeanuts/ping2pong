@@ -6,7 +6,10 @@
   import { encodeHashToBase64 } from "@holochain/client";
   // Import local types and context
   import { clientContext, type ClientContext } from "../../contexts";
-  import type { Game, Score, GameStatus, UpdateGameInput } from "../ping_2_pong/types";
+
+  import { decode } from "@msgpack/msgpack";
+
+  import type { Game, Score, GameStatus, UpdateGameInput, EntryTypes } from "../ping_2_pong/types"; 
   import { currentRoute } from "../../stores/routeStore";
 
   export let gameId: ActionHash;
@@ -82,44 +85,75 @@
       });
 
       if (result) {
+        console.log("PongGame fetchGameState received result:", result); // Add log
         gameRecord = result;
         const recordEntry = result.entry;
-
-        // FIX: Safely extract Entry using 'Present' key check ONLY
         let actualEntry: Entry | undefined = undefined;
+
+        // Extract the Entry object
         if (recordEntry && typeof recordEntry === 'object' && 'Present' in recordEntry && (recordEntry as any).Present) {
-             // Check if the nested entry field exists (adjust path if needed based on client lib)
              const presentEntry = (recordEntry as { Present: Entry }).Present;
-             // Check if presentEntry itself is valid (not null/undefined)
              if (presentEntry) {
                 actualEntry = presentEntry;
-             } else {
-                 console.warn("RecordEntry has 'Present' key, but its value is null/undefined", recordEntry);
-             }
+                console.log("PongGame fetchGameState extracted entry shell:", actualEntry); // Add log
+             } else { console.warn("RecordEntry has 'Present' key, but its value is null/undefined", recordEntry); }
         }
-        // REMOVED the unsafe 'else if' fallback cast block
 
-        if (actualEntry) {
-            const game = actualEntry as unknown as Game;
-            // ... rest of successful fetch logic as before ...
-            if (!game || typeof game !== 'object' || !game.player_1 || !game.game_status) { /* ... */ return; }
-            liveGame = game;
-            console.log("Fetched game data:", liveGame);
-            const myPubKeyB64 = encodeHashToBase64(playerKey);
-            isPlayer1 = encodeHashToBase64(liveGame.player_1) === myPubKeyB64;
-            isPlayer2 = !!liveGame.player_2 && (encodeHashToBase64(liveGame.player_2) === myPubKeyB64);
-            console.log(`Is Player 1: ${isPlayer1}, Is Player 2: ${isPlayer2}`);
-            if (score.player1 === 0 && score.player2 === 0) {
-                paddle1Y = liveGame.player_1_paddle ?? (CANVAS_HEIGHT / 2 - PADDLE_HEIGHT / 2);
-                paddle2Y = liveGame.player_2_paddle ?? (CANVAS_HEIGHT / 2 - PADDLE_HEIGHT / 2);
-                ball.x = liveGame.ball_x ?? (CANVAS_WIDTH / 2); ball.y = liveGame.ball_y ?? (CANVAS_HEIGHT / 2);
-                ball.dx = 5 * (Math.random() > 0.5 ? 1 : -1); ball.dy = 5 * (Math.random() > 0.5 ? 1 : -1);
+        if (actualEntry && actualEntry.entry_type === 'App' && actualEntry.entry instanceof Uint8Array) {
+            // *** Decode the entry bytes ***
+            try {
+                // Decode the msgpack bytes from the entry field
+                const decodedGame = decode(actualEntry.entry) as Game; // Cast after decoding
+                console.log("PongGame fetchGameState DECODED game:", decodedGame); // Add log
+
+                // *** Validate the decoded structure ***
+                if (!decodedGame || typeof decodedGame !== 'object' || !decodedGame.player_1 || typeof decodedGame.game_status === 'undefined') { // Check game_status existence
+                    errorMsg = "Decoded game data structure is invalid.";
+                    console.error(errorMsg, decodedGame);
+                    liveGame = undefined; gameRecord = undefined;
+                    return; // Stop processing
+                }
+
+                // *** Assign the DECODED object to liveGame ***
+                liveGame = decodedGame;
+                console.log("Fetched and decoded game data successfully assigned to liveGame:", liveGame);
+
+                // Now perform the rest of the setup using the correctly decoded liveGame
+                const myPubKeyB64 = encodeHashToBase64(playerKey);
+                isPlayer1 = encodeHashToBase64(liveGame.player_1) === myPubKeyB64;
+                isPlayer2 = !!liveGame.player_2 && (encodeHashToBase64(liveGame.player_2) === myPubKeyB64);
+                console.log(`Player identification: isPlayer1=<span class="math-inline">\{isPlayer1\}, isPlayer2\=</span>{isPlayer2}`);
+
+                // Initialize positions only if score is 0 (avoids overriding mid-game state if component re-mounts)
+                if (score.player1 === 0 && score.player2 === 0) {
+                    paddle1Y = liveGame.player_1_paddle ?? (CANVAS_HEIGHT / 2 - PADDLE_HEIGHT / 2);
+                    paddle2Y = liveGame.player_2_paddle ?? (CANVAS_HEIGHT / 2 - PADDLE_HEIGHT / 2);
+                    ball.x = liveGame.ball_x ?? (CANVAS_WIDTH / 2);
+                    ball.y = liveGame.ball_y ?? (CANVAS_HEIGHT / 2);
+                    // Only reset ball vector if it's truly the start
+                    ball.dx = 5 * (Math.random() > 0.5 ? 1 : -1);
+                    ball.dy = 5 * (Math.random() > 0.5 ? 1 : -1);
+                    console.log("Initialized paddle/ball positions from game state.");
+                }
+
+                // Check game over status from fetched state
+                // Note: game_status is just a string 'Waiting', 'InProgress', 'Finished' now based on types.ts
+                if (liveGame.game_status === 'Finished') {
+                     console.log("Game already finished according to fetched state.");
+                     gameOver = true;
+                     // You might want to fetch scores here if game is finished on load
+                } else {
+                     gameOver = false; // Ensure it's not stuck on true if re-fetching
+                }
+
+            } catch (decodeError) {
+                errorMsg = `Failed to decode game entry data: ${(decodeError as Error).message}`;
+                console.error(errorMsg, actualEntry, decodeError);
+                liveGame = undefined; gameRecord = undefined;
             }
-            if (liveGame.game_status?.type === 'Finished') { console.log("Game already finished on load."); gameOver = true; }
 
         } else {
-            // This block now correctly catches cases where the entry wasn't Present
-            errorMsg = `Workspaceed record for game ${encodeHashToBase64(gameId)} does not contain a present entry.`;
+            errorMsg = `Could not extract present App entry with Uint8Array data from game record: ${encodeHashToBase64(gameId)}`;
             console.error(errorMsg, result);
             liveGame = undefined; gameRecord = undefined;
         }
@@ -136,6 +170,7 @@
     }
   }
 
+  
   function handleKeyDown(e: KeyboardEvent) {
     if (gameOver || !liveGame) return;
 
