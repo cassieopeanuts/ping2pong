@@ -41,7 +41,7 @@ pub fn player_exists(agent_pub_key: &AgentPubKey) -> ExternResult<bool> {
     Ok(!links.is_empty())
 }
 
-// Helper function to check if a player is already in an ongoing game.
+// Helper function to check if a player is already in an *InProgress* game.
 pub fn is_player_in_ongoing_game(player_pub_key: &AgentPubKey) -> ExternResult<bool> {
     // Check games where the player is player1.
     let player1_links = get_links(
@@ -51,11 +51,14 @@ pub fn is_player_in_ongoing_game(player_pub_key: &AgentPubKey) -> ExternResult<b
 
     for link in player1_links {
         if let Some(game_action_hash) = link.target.into_action_hash() {
+            // Fetch the LATEST state of the game
             let maybe_record = crate::game::get_latest_game(game_action_hash)?;
             if let Some(record) = maybe_record {
                 if let Some(entry_data) = record.entry().as_option() {
                      if let Ok(game) = Game::try_from(entry_data.clone()) {
+                         // *** FIX: Only return true if the game status is InProgress ***
                          if game.game_status == GameStatus::InProgress {
+                            debug!("Player {:?} found in InProgress game {:?} as Player 1", player_pub_key, record.action_hashed().hash);
                             return Ok(true);
                         }
                      } else { warn!("Failed to deserialize Game entry for record: {:?}", record.action_hashed().hash); }
@@ -72,11 +75,14 @@ pub fn is_player_in_ongoing_game(player_pub_key: &AgentPubKey) -> ExternResult<b
 
     for link in player2_links {
          if let Some(game_action_hash) = link.target.into_action_hash() {
+             // Fetch the LATEST state of the game
              let maybe_record = crate::game::get_latest_game(game_action_hash)?;
              if let Some(record) = maybe_record {
                  if let Some(entry_data) = record.entry().as_option() {
                       if let Ok(game) = Game::try_from(entry_data.clone()) {
+                          // *** FIX: Only return true if the game status is InProgress ***
                           if game.game_status == GameStatus::InProgress {
+                             debug!("Player {:?} found in InProgress game {:?} as Player 2", player_pub_key, record.action_hashed().hash);
                              return Ok(true);
                          }
                       } else { warn!("Failed to deserialize Game entry for record: {:?}", record.action_hashed().hash); }
@@ -85,5 +91,7 @@ pub fn is_player_in_ongoing_game(player_pub_key: &AgentPubKey) -> ExternResult<b
          }
     }
 
-    Ok(false) // Not found in any InProgress game
+    // If no InProgress games were found for the player
+    debug!("Player {:?} not found in any InProgress game.", player_pub_key);
+    Ok(false)
 }

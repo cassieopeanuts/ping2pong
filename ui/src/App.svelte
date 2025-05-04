@@ -2,34 +2,35 @@
   import { onMount, onDestroy, setContext } from "svelte";
   // Import Holochain client essentials
   import { AppWebsocket, encodeHashToBase64 } from "@holochain/client";
+  // Make sure ActionHash is imported if used in types
   import type { AppClient, HolochainError, ActionHash, AgentPubKey } from "@holochain/client";
   // Import Svelte helpers/stores
-  import { derived } from "svelte/store";
+  import { derived, get } from "svelte/store"; // Import get from svelte/store
   import { clientContext } from "./contexts";
   import { currentRoute } from "./stores/routeStore";
   import { playerProfile } from "./stores/playerProfile";
   import { currentGame } from "./stores/currentGame";
-  // *** Import invitation store and helpers ***
+  // Import invitation store and helpers
   import { invitations, addInvitation, removeInvitation } from "./stores/invitationStore";
-  import type { GameInvitationSignal } from "./ping_2_pong/ping_2_pong/types";
+  // Import the specific signal type
+  import type { GameInvitationSignal, GameStartedSignal } from "./ping_2_pong/ping_2_pong/types"; // Adjust path if necessary
 
   // Import Components
   import WelcomePopup from "./ping_2_pong/WelcomePopup.svelte";
   import Dashboard from "./ping_2_pong/game/Dashboard.svelte";
   import PongGame from "./ping_2_pong/game/PongGame.svelte";
   import StatisticsDashboard from "./ping_2_pong/game/StatisticsDashboard.svelte";
-  // *** Import Invitation Popup ***
   import InvitationPopup from "./ping_2_pong/game/InvitationPopup.svelte"; // Adjust path if needed
 
+  // Define the UnsubscribeFunction type locally
   type UnsubscribeFunction = () => void;
-  
 
   // Component State
   let client: AppClient;
   let error: HolochainError | undefined;
   let loading = true;
   let presenceIntervalId: ReturnType<typeof setInterval> | undefined;
-  let unsubscribeFromSignals: UnsubscribeFunction | undefined;
+  let unsubscribeFromSignals: UnsubscribeFunction | undefined; // Use the locally defined type
 
   // Holochain Client Setup
   const appClientContext = {
@@ -53,15 +54,12 @@
   }
 
   // --- Presence Publishing ---
-
   async function publishPresence() {
-      // This check prevents publishing before client is ready AND user is registered
-      if (!client || !$isRegistered) return;
+      const regStatus = get(isRegistered);
+      if (!client || !regStatus) return;
       try {
-          // console.log("Publishing presence...");
           await client.callZome({ cap_secret: null, role_name: "ping_2_pong", zome_name: "ping_2_pong", fn_name: "publish_presence", payload: null, });
       } catch(e) {
-          // Ignore source chain errors in interval? Or maybe stop interval?
           if ((e as HolochainError).message.includes("source chain head has moved")) {
               console.warn("Presence publishing skipped due to source chain conflict (likely harmless).");
           } else {
@@ -73,144 +71,165 @@
 
   // --- Signal Handler ---
   function handleSignal(signalPayload: any) {
-      console.log("App.svelte received signal:", signalPayload);
+      console.log("[App.svelte handleSignal] Received signal RAW:", JSON.stringify(signalPayload, null, 2));
 
-      // Ensure payload and type exist
-      if (!signalPayload?.type) return;
+      if (signalPayload && typeof signalPayload === 'object' && signalPayload.App) {
+          const appSignalWrapper = signalPayload.App;
+          console.log("[App.svelte handleSignal] Processing App signal wrapper:", appSignalWrapper);
 
-      // Check if the payload is a GameInvitation
-      if (signalPayload.type === "GameInvitation") {
-          // Basic validation of the invitation structure
-          if (signalPayload.game_id && signalPayload.inviter && signalPayload.message) {
-              // Ensure we don't show invites sent by ourselves
-              if (encodeHashToBase64(signalPayload.inviter) !== encodeHashToBase64(client.myPubKey)) {
-                  console.log("Adding invitation to store:", signalPayload);
-                  // Add to the global store (will automatically prevent duplicates)
-                  addInvitation(signalPayload as GameInvitationSignal);
+          const actualSignal = appSignalWrapper.payload;
+
+          if (!actualSignal?.type) {
+              console.log("[App.svelte handleSignal] App signal payload ignored (missing type).", actualSignal);
+              return;
+          }
+
+          console.log(`[App.svelte handleSignal] Detected signal type: ${actualSignal.type}`);
+
+          // Handle GameInvitation signals
+          if (actualSignal.type === "GameInvitation") {
+              console.log("[App.svelte handleSignal] Processing GameInvitation...");
+              const invitation = actualSignal as GameInvitationSignal;
+              if (invitation.game_id && invitation.inviter && invitation.message) {
+                  if (encodeHashToBase64(invitation.inviter) !== encodeHashToBase64(client.myPubKey)) {
+                      console.log("[App.svelte handleSignal] Adding invitation to store:", invitation);
+                      addInvitation(invitation);
+                      console.log("[App.svelte handleSignal] Invitations store state:", get(invitations));
+                  } else {
+                      console.log("[App.svelte handleSignal] Ignoring self-sent GameInvitation signal.");
+                  }
               } else {
-                  console.log("Ignoring self-sent GameInvitation signal.");
+                  console.warn("[App.svelte handleSignal] Malformed GameInvitation signal received:", invitation);
               }
-          } else {
-              console.warn("Malformed GameInvitation signal received:", signalPayload);
+          // Handle GameStarted signals
+          } else if (actualSignal.type === "GameStarted") {
+              console.log("[App.svelte handleSignal] Processing GameStarted...");
+              const { game_id, player_1, player_2 } = actualSignal as GameStartedSignal;
+
+              if (game_id && player_1 && player_2) {
+                   const myPubKeyB64 = encodeHashToBase64(client.myPubKey);
+                   const p1B64 = encodeHashToBase64(player_1);
+                   const p2B64 = encodeHashToBase64(player_2);
+
+                   // *** ADDED DETAILED LOGS ***
+                   console.log(`[App.svelte handleSignal GameStarted] MyKey: ${myPubKeyB64}, P1: ${p1B64}, P2: ${p2B64}`);
+
+                   // Check if I am one of the players in the started game
+                   if (myPubKeyB64 === p1B64 || myPubKeyB64 === p2B64) {
+                       console.log(`[App.svelte handleSignal GameStarted] Match found! I am involved.`);
+                       console.log(`[App.svelte handleSignal GameStarted] Setting currentGame to: ${encodeHashToBase64(game_id)}`);
+                       currentGame.set(game_id);
+                       console.log(`[App.svelte handleSignal GameStarted] Setting currentRoute to: gameplay`);
+                       currentRoute.set("gameplay");
+                       console.log(`[App.svelte handleSignal GameStarted] Clearing invitations.`);
+                       invitations.set([]);
+                       console.log(`[App.svelte handleSignal GameStarted] Navigation logic complete.`);
+                   } else {
+                       console.log(`[App.svelte handleSignal GameStarted] Ignoring signal for game ${encodeHashToBase64(game_id)} as I am not a participant.`);
+                   }
+              } else {
+                   console.warn("[App.svelte handleSignal GameStarted] Signal missing required fields (game_id, player_1, player_2)", actualSignal);
+              }
+          // Handle standard signals
+          } else if (actualSignal.type === "EntryCreated") {
+              console.log("[App.svelte handleSignal] Received EntryCreated signal (standard).");
+          } else if (actualSignal.type === "LinkCreated") {
+              console.log("[App.svelte handleSignal] Received LinkCreated signal (standard).");
           }
-      } else if (signalPayload.type === "GameStarted") {
-          console.log("Received GameStarted signal:", signalPayload);
-          const { game_id, opponent } = signalPayload;
-          if (game_id && opponent) {
-              // Assume if we receive this, we are Player 1
-               console.log(`Game ${encodeHashToBase64(game_id)} started with opponent ${encodeHashToBase64(opponent)}`);
-               // Navigate P1 to the game
-               currentGame.set(game_id);
-               currentRoute.set("gameplay");
-               // Clear any pending invitations when a game starts
-               invitations.set([]);
-          } else {
-               console.warn("GameStarted signal missing game_id or opponent", signalPayload);
+          else {
+              console.log(`[App.svelte handleSignal] Received unhandled signal type in payload: ${actualSignal.type}`);
           }
+      } else {
+          console.log("[App.svelte handleSignal] Received signal ignored (not App signal structure):", signalPayload);
       }
-      // Add handlers for other signal types if needed
   }
 
 
   // --- Event Handlers ---
-
-  // Handles join-game event from Dashboard/Lobby (when clicking "Play Random" or accepting invite)
   function handleJoinGame(event: CustomEvent<{ gameHash: ActionHash }>) {
-    console.log("App.svelte handling join-game event:", event.detail);
-    if (event.detail.gameHash) {
-        currentGame.set(event.detail.gameHash);
-        currentRoute.set("gameplay");
-        // Clear any pending invitations when joining/starting a game
-        invitations.set([]);
-    } else {
-        console.error("join-game event missing gameHash");
-    }
+    // This event is dispatched by Lobby/Popup after *calling* join_game.
+    // Navigation now relies solely on receiving the GameStarted signal.
+    console.log("[App.svelte handleJoinGame] Event received, waiting for GameStarted signal.", event.detail);
+    invitations.set([]); // Still clear invitations if one was accepted
   }
 
-  // Handles registration from WelcomePopup (keep as is)
-  function handleRegistration() { /* ... */ }
+  function handleRegistration() { console.log('Player registered!'); }
 
   // --- Popup Action Handlers ---
   async function handleAcceptInvitation(event: CustomEvent<{ gameId: ActionHash }>) {
       const gameIdToJoin = event.detail.gameId;
-      console.log("Accepting invitation for game:", encodeHashToBase64(gameIdToJoin));
-      // Remove the invitation from the store
-      removeInvitation(gameIdToJoin);
-      // Call the backend join_game function
+      console.log("[App.svelte handleAcceptInvitation] Accepting invitation for game:", encodeHashToBase64(gameIdToJoin));
+      removeInvitation(gameIdToJoin); // Remove immediately
       try {
-          loading = true; // Optional: show loading indicator
+          loading = true;
           if (!client) throw new Error("Client not ready");
-          // We don't need the full game record back here, just need to join
+          // Call the backend function for Player 2 to join the game
           await client.callZome({
-              cap_secret: null,
-              role_name: "ping_2_pong",
-              zome_name: "ping_2_pong",
-              fn_name: "join_game",
-              payload: gameIdToJoin,
+              cap_secret: null, role_name: "ping_2_pong", zome_name: "ping_2_pong",
+              fn_name: "join_game", // Backend function for joining
+              payload: gameIdToJoin, // Pass the game hash to join
           });
-          console.log("Successfully joined game via invitation accept.");
-          // Navigate to the game screen
-          currentGame.set(gameIdToJoin);
-          currentRoute.set("gameplay");
+          console.log("[App.svelte handleAcceptInvitation] Successfully called join_game backend function. Waiting for GameStarted signal...");
+          // *** DO NOT navigate here. Wait for GameStarted signal. ***
       } catch(e) {
-           console.error("Error joining game after accepting invitation:", e);
-           error = e as HolochainError; // Show error to user
-           // Maybe add the invitation back if join fails? Or show error message.
+           console.error("[App.svelte handleAcceptInvitation] Error joining game:", e);
+           error = e as HolochainError;
       } finally {
           loading = false;
       }
   }
 
   function handleDeclineInvitation(gameIdToDecline: ActionHash) {
-    // const gameIdToDecline = event.detail.gameId; // Remove this line
-    console.log("Declining invitation for game:", encodeHashToBase64(gameIdToDecline));
-    // Remove the invitation from the store
-    removeInvitation(gameIdToDecline);
-}
+      console.log("[App.svelte handleDeclineInvitation] Declining invitation for game:", encodeHashToBase64(gameIdToDecline));
+      removeInvitation(gameIdToDecline);
+  }
+
+  // --- Exit Game Handler ---
+  function exitGame() {
+      console.log("[App.svelte exitGame] Exiting game...");
+      // TODO: Optionally call backend to update game status (e.g., cancel/finish)
+      currentGame.set(null);
+      currentRoute.set("dashboard");
+      invitations.set([]);
+  }
+
 
   // --- Lifecycle Hooks ---
   onMount(async () => {
     try {
       loading = true;
       client = await appClientContext.getClient();
-      // Start signal listener
       if (client) {
           unsubscribeFromSignals = client.on("signal", handleSignal);
           console.log("App.svelte signal listener attached.");
       }
-      // Start presence interval
       presenceIntervalId = setInterval(publishPresence, 15000);
     } catch (e) { console.error("Failed to initialize Holochain client:", e); error = e as HolochainError;}
     finally { loading = false; }
   });
 
   onDestroy(() => {
-      if (unsubscribeFromSignals) {
-          unsubscribeFromSignals();
-          console.log("App.svelte signal listener detached.");
-      }
+      if (unsubscribeFromSignals) { unsubscribeFromSignals(); console.log("App.svelte signal listener detached."); }
       if (presenceIntervalId) { clearInterval(presenceIntervalId); }
-      console.log("App destroyed, closing Holochain connection.");
-      // Consider closing client connection if appropriate: client?.close();
+      console.log("App destroyed");
   });
 
+  // Provide client context
   setContext(clientContext, appClientContext);
 
+  // Reactive derivations
   const isRegistered = derived(playerProfile, ($p) => $p !== null);
   let route: string; currentRoute.subscribe((value) => { route = value || 'dashboard'; });
   let gameId: ActionHash | null = null; currentGame.subscribe((value) => { gameId = value; });
   let currentPlayerProfile: { nickname: string; agentKey: AgentPubKey } | null; playerProfile.subscribe((value) => { currentPlayerProfile = value; });
 
-  // *** Derive state for the current invitation popup ***
+  // Derive state for the current invitation popup
   let currentInvitationToShow: GameInvitationSignal | null = null;
   invitations.subscribe(invList => {
-      // Show the first invitation in the list
       currentInvitationToShow = invList.length > 0 ? invList[0] : null;
   });
 
-
 </script>
-
 
 {#if loading} <main><p>Connecting to Holochain...</p></main>
 {:else if error} <main> <p>Error Connecting: {error.message}</p> <p>Please ensure the Holochain conductor is running...</p> </main>
@@ -231,22 +250,25 @@
        {@const gameIdObject = currentInvitationToShow.game_id}
 
        <InvitationPopup
-       inviter={inviterName}
-       gameId={gameIdString}
-       on:accept={(e) => handleAcceptInvitation(e)}
-       on:decline={() => handleDeclineInvitation(gameIdObject)} 
-     />
+         inviter={inviterName}
+         gameId={gameIdString}
+         on:accept={(e) => handleAcceptInvitation(e)}
+         on:decline={() => handleDeclineInvitation(gameIdObject)}
+       />
     {/if}
-
 
     {#if route === "dashboard"}
       <Dashboard on:join-game={handleJoinGame} />
     {:else if route === "gameplay"}
        {#if currentPlayerProfile?.agentKey && gameId}
-           <PongGame gameId={gameId} playerKey={currentPlayerProfile.agentKey} />
+           <PongGame
+             gameId={gameId}
+             playerKey={currentPlayerProfile.agentKey}
+             on:exit-game={exitGame}
+           />
        {:else}
-           <p>Loading game data...</p>
-           <button on:click={() => { currentGame.set(null); currentRoute.set('dashboard'); invitations.set([]); }}>Back to Dashboard</button>
+           <p>Loading game data or missing information...</p>
+           <button on:click={exitGame}>Back to Dashboard</button>
        {/if}
     {:else if route === "statistics"}
       <StatisticsDashboard />
