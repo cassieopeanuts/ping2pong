@@ -161,13 +161,25 @@ pub fn join_game(original_game_hash: ActionHash) -> ExternResult<Record> {
     //    This signal informs connected UIs that the game is ready to start.
     //    We broadcast because `remote_signal` isn't available/reliable in HDK 0.4.x.
     //    The UI (`App.svelte`) will filter and react only if the current user is P1 or P2.
-    let signal_payload = Signal::GameStarted {
+    let start_sig = Signal::GameStarted {
          game_id: original_game_hash.clone(),
          player_1: player1_pubkey.clone(), // Include P1 pubkey
          player_2: caller_pubkey.clone(),   // Include P2 pubkey (the caller)
     };
-    emit_signal(&signal_payload)?; // Broadcast the signal
-    debug!("[join_game] Emitted GameStarted signal (broadcast): {:?}", signal_payload);
+
+    // 7. Broadcast locally (player 2) …
+    emit_signal(&start_sig)?;
+
+    // 8. Relay to player 1 – synchronous RPC
+    call_remote(
+        player1_pubkey.clone(),          // destination agent
+        zome_info()?.name,               // current zome name
+        "receive_remote_signal".into(),  // the helper you just added
+        None,                            // provenance (cap secret)
+        &start_sig                       // same payload
+    )?;
+
+    debug!("[join_game] Emitted GameStarted signal (broadcast): {:?}", start_sig);
 
 
     // 8. Fetch and return the latest record (representing the update action)
@@ -462,21 +474,34 @@ pub fn get_online_users(_: ()) -> ExternResult<Vec<AgentPubKey>> {
     Ok(online_agents)
 }
 
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct InvitationPayload {
+    pub game_id : ActionHash,
+    pub invitee : AgentPubKey,
+    pub message : String,
+}
+
 /// Sends a GameInvitation signal, typically broadcast.
 #[hdk_extern]
-pub fn send_invitation(invitation: Invitation) -> ExternResult<()> {
-    // Construct the signal enum variant
+pub fn send_invitation(payload: InvitationPayload) -> ExternResult<()> {
+    // build the signal – inviter is *this* agent
     let signal = Signal::GameInvitation {
-        game_id: invitation.game_id.clone(),
-        inviter: invitation.inviter.clone(),
-        message: invitation.message.clone(),
+        game_id : payload.game_id.clone(),
+        inviter : agent_info()?.agent_latest_pubkey,
+        message : payload.message.clone(),
     };
-    debug!("[send_invitation] Preparing to broadcast signal: {:?}", signal);
 
-    // Use emit_signal to broadcast the invitation.
-    // The UI on the receiving end needs to check if it's the intended recipient.
+    // fire it locally (so the inviter’s UI updates)
     emit_signal(&signal)?;
-    debug!("[send_invitation] Emitted GameInvitation signal (broadcast)");
+
+    // …and remotely to the invitee
+    let _ = call_remote(
+        payload.invitee,
+        "ping_2_pong",
+        "receive_remote_signal".into(),
+        None,
+        &signal,                     // send by reference – the macro handles SB
+    );
 
     Ok(())
 }

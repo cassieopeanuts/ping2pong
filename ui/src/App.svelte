@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy, setContext } from "svelte";
   // Import Holochain client essentials
-  import { AppWebsocket, encodeHashToBase64 } from "@holochain/client";
+  import { AppWebsocket, encodeHashToBase64, decodeHashFromBase64 } from "@holochain/client";
   // Make sure ActionHash is imported if used in types
   import type { AppClient, HolochainError, ActionHash, AgentPubKey } from "@holochain/client";
   // Import Svelte helpers/stores
@@ -156,27 +156,36 @@
   function handleRegistration() { console.log('Player registered!'); }
 
   // --- Popup Action Handlers ---
-  async function handleAcceptInvitation(event: CustomEvent<{ gameId: ActionHash }>) {
-      const gameIdToJoin = event.detail.gameId;
-      console.log("[App.svelte handleAcceptInvitation] Accepting invitation for game:", encodeHashToBase64(gameIdToJoin));
-      removeInvitation(gameIdToJoin); // Remove immediately
-      try {
-          loading = true;
-          if (!client) throw new Error("Client not ready");
-          // Call the backend function for Player 2 to join the game
-          await client.callZome({
-              cap_secret: null, role_name: "ping_2_pong", zome_name: "ping_2_pong",
-              fn_name: "join_game", // Backend function for joining
-              payload: gameIdToJoin, // Pass the game hash to join
-          });
-          console.log("[App.svelte handleAcceptInvitation] Successfully called join_game backend function. Waiting for GameStarted signal...");
-          // *** DO NOT navigate here. Wait for GameStarted signal. ***
-      } catch(e) {
-           console.error("[App.svelte handleAcceptInvitation] Error joining game:", e);
-           error = e as HolochainError;
-      } finally {
-          loading = false;
-      }
+  async function handleAcceptInvitation(
+    event: CustomEvent<{ gameId: string | ActionHash }>
+  ) {
+    const gameHash: ActionHash =
+      typeof event.detail.gameId === "string"
+        ? decodeHashFromBase64(event.detail.gameId)
+        : event.detail.gameId;
+
+    console.log("[App] Accepting invitation for", encodeHashToBase64(gameHash));
+
+    removeInvitation(gameHash);     // optimistic removal
+    loading = true;
+
+    try {
+      await client.callZome({
+        cap_secret: null,
+        role_name : "ping_2_pong",
+        zome_name : "ping_2_pong",
+        fn_name   : "accept_invitation",   /* ← new zome call */
+        payload   : { game_id: gameHash }
+      });
+
+      /* Navigation now waits for the `GameStarted` signal */
+      console.log("[App] accept_invitation sent – waiting for GameStarted…");
+    } catch (e) {
+      console.error("accept_invitation error:", e);
+      error = e as HolochainError;
+    } finally {
+      loading = false;
+    }
   }
 
   function handleDeclineInvitation(gameIdToDecline: ActionHash) {

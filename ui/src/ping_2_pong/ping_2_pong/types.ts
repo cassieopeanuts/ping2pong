@@ -1,5 +1,3 @@
-// ping_2_pong/ui/src/ping_2_pong/types.ts
-
 import type {
   ActionHash,
   AgentPubKey,
@@ -10,33 +8,30 @@ import type {
   SignedActionHashed,
   Update,
   Entry,
-  Record, // Added Record type
+  Record,
 } from "@holochain/client";
 
-// --- ENUMS ---
+/* ─────────────── ENUMS ─────────────── */
 
-// Mirror Rust enum from integrity/lib.rs
 export enum LinkTypes {
-    GameIdToGame = 'GameIdToGame',
-    Player1ToGames = 'Player1ToGames',
-    Player2ToGames = 'Player2ToGames',
-    GameUpdates = 'GameUpdates',
-    GameToScores = 'GameToScores',
-    GameToStatistics = 'GameToStatistics',
-    PlayerToPlayers = 'PlayerToPlayers',
-    PlayerNameToPlayer = 'PlayerNameToPlayer',
-    PlayerUpdates = 'PlayerUpdates',
-    PlayerToScores = 'PlayerToScores',
-    Presence = 'Presence',
+  GameIdToGame      = "GameIdToGame",
+  Player1ToGames    = "Player1ToGames",
+  Player2ToGames    = "Player2ToGames",
+  GameUpdates       = "GameUpdates",
+  GameToScores      = "GameToScores",
+  GameToStatistics  = "GameToStatistics",
+  PlayerToPlayers   = "PlayerToPlayers",
+  PlayerNameToPlayer= "PlayerNameToPlayer",
+  PlayerUpdates     = "PlayerUpdates",
+  PlayerToScores    = "PlayerToScores",
+  Presence          = "Presence",
 }
 
-// String literal unions matching backend enums
-export type PlayerStatus = 'Available' | 'InGame';
-export type GameStatus = 'Waiting' | 'InProgress' | 'Finished';
+export type PlayerStatus = "Available" | "InGame";
+export type GameStatus   = "Waiting"   | "InProgress" | "Finished";
 
-// --- SIGNAL TYPES ---
+/* ─────────────── Holochain-generated signals ─────────────── */
 
-// Standard Holochain signals (emitted by post_commit hook)
 export type EntryCreatedSignal = {
   type: "EntryCreated";
   action: SignedActionHashed<Create>;
@@ -65,82 +60,90 @@ export type LinkDeletedSignal = {
   create_link_action: SignedActionHashed<CreateLink>;
 };
 
-// Custom application signals
+/* ─────────────── Custom app signals ─────────────── */
+
 export type GameInvitationSignal = {
   type: "GameInvitation";
   game_id: ActionHash;
   inviter: AgentPubKey;
   message: string;
 };
+
 export type PaddleUpdateSignal = {
-   type: "PaddleUpdate";
-   game_id: ActionHash;
-   player: AgentPubKey;
-   paddle_y: number; // Corresponds to u32
-};
-export type BallUpdateSignal = {
-   type: "BallUpdate";
-   game_id: ActionHash;
-   ball_x: number; // Corresponds to u32
-   ball_y: number; // Corresponds to u32
-   ball_dx: number; // Corresponds to i32
-   ball_dy: number; // Corresponds to i32
-};
-export type GameOverSignal = {
-    type: "GameOver";
-    game_id: ActionHash;
-    winner: AgentPubKey | null; // Corresponds to Option<AgentPubKey>
-    score1: number; // Corresponds to u32
-    score2: number; // Corresponds to u32
+  type: "PaddleUpdate";
+  game_id: ActionHash;
+  player:   AgentPubKey;
+  paddle_y: number;
 };
 
-// *** ADDED GameStartedSignal definition ***
+export type BallUpdateSignal = {
+  type: "BallUpdate";
+  game_id: ActionHash;
+  ball_x:  number;
+  ball_y:  number;
+  ball_dx: number;
+  ball_dy: number;
+};
+
+export type ScoreUpdateSignal = {            // ← NEW
+  type: "ScoreUpdate";
+  game_id: ActionHash;
+  score1 : number;
+  score2 : number;
+};
+
+export type GameOverSignal = {
+  type: "GameOver";
+  game_id: ActionHash;
+  winner: AgentPubKey | null;
+  score1: number;
+  score2: number;
+};
+
 export type GameStartedSignal = {
   type: "GameStarted";
   game_id: ActionHash;
-  player_1: AgentPubKey; // Player 1's public key
-  player_2: AgentPubKey; // Player 2's public key
+  player_1: AgentPubKey;
+  player_2: AgentPubKey;
 };
 
-// Union of all possible signals the UI might receive/handle
+/* ─────────────── Union of every signal the UI handles ─────────────── */
+
 export type Ping2PongSignal =
- | EntryCreatedSignal
- | EntryUpdatedSignal
- | EntryDeletedSignal
- | LinkCreatedSignal
- | LinkDeletedSignal
- | GameInvitationSignal
- | PaddleUpdateSignal
- | BallUpdateSignal
- | GameOverSignal
- | GameStartedSignal; // Added GameStartedSignal to the union
+  | EntryCreatedSignal
+  | EntryUpdatedSignal
+  | EntryDeletedSignal
+  | LinkCreatedSignal
+  | LinkDeletedSignal
+  | GameInvitationSignal
+  | PaddleUpdateSignal
+  | BallUpdateSignal
+  | ScoreUpdateSignal         // ← NEW
+  | GameOverSignal
+  | GameStartedSignal;
 
-
-// --- ENTRY TYPES ---
-
+/* ─────────────── Entry-type mappings ─────────────── */
 /* dprint-ignore-start */
-// Define EntryTypes matching the integrity zome enum variants
 export type EntryTypes =
- | ({ type: 'Game'; } & Game)
- | ({ type: 'Player'; } & Player)
- | ({ type: 'Score'; } & Score)
- | ({ type: 'Statistics'; } & Statistics)
- | ({ type: 'Presence'; } & Presence)
- | ({ type: 'AnchorPath'; } & AnchorPath);
+  | ({ type: "Game"; }        & Game)
+  | ({ type: "Player"; }      & Player)
+  | ({ type: "Score"; }       & Score)
+  | ({ type: "Statistics"; }  & Statistics)
+  | ({ type: "Presence"; }    & Presence)
+  | ({ type: "AnchorPath"; }  & AnchorPath);
 /* dprint-ignore-end */
 
-
-// --- Data Structure Interfaces (matching Rust structs) ---
+/* ─────────────── Data structures ─────────────── */
 
 export interface Game {
   player_1: AgentPubKey;
-  player_2: AgentPubKey | null; // Corresponds to Option<AgentPubKey>
-  created_at: number; // Holochain Timestamp might need conversion if not just number
-  game_status: GameStatus; // Use string union type
-  player_1_paddle: number; // u32 -> number
-  player_2_paddle: number; // u32 -> number
-  ball_x: number; // u32 -> number
-  ball_y: number; // u32 -> number
+  player_2: AgentPubKey | null;
+  created_at: number;
+  game_status: GameStatus;
+  player_1_paddle: number;
+  player_2_paddle: number;
+  ball_x: number;
+  ball_y: number;
 }
 
 export interface Player {
@@ -151,39 +154,36 @@ export interface Player {
 export interface Score {
   game_id: ActionHash;
   player: AgentPubKey;
-  player_points: number; // u32 -> number
-  created_at: number; // Holochain Timestamp -> number (check backend serialization)
+  player_points: number;
+  created_at: number;
 }
 
 export interface Statistics {
   game_id: ActionHash;
-  signal_latency: number; // u32 -> number
-  score_validation_time: number; // u32 -> number
-  dht_response_time: number; // u32 -> number
-  network_delay: number; // u32 -> number
-  timestamp: number; // Holochain Timestamp -> number (check backend serialization)
+  signal_latency: number;
+  score_validation_time: number;
+  dht_response_time: number;
+  network_delay: number;
+  timestamp: number;
 }
 
 export interface Presence {
-    agent_pubkey: AgentPubKey;
-    timestamp: number; // Corresponds to u64
+  agent_pubkey: AgentPubKey;
+  timestamp: number;
 }
 
-export interface AnchorPath {
-    // No specific fields needed by UI based on current usage
-}
+export interface AnchorPath {}
 
-// Input type for update_game zome call
+/* ─────────────── Helper payloads ─────────────── */
+
 export interface UpdateGameInput {
   original_game_hash: ActionHash;
   previous_game_hash: ActionHash;
   updated_game: Game;
 }
 
-// Input type for send_invitation zome call (matches Rust struct)
 export interface Invitation {
-    game_id: ActionHash;
-    inviter: AgentPubKey;
-    message: string;
+  game_id: ActionHash;
+  inviter: AgentPubKey;
+  message: string;
 }
-

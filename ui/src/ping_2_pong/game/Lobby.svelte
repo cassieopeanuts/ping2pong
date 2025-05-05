@@ -35,137 +35,156 @@
   // --- Zome Calls & Logic ---
 
   // Executed when "Play Random" is clicked
-
   async function joinOrCreateGame() {
-    loading = true; statusMessage = null; invitationStatus = null;
-    if (!client) { statusMessage = "Holochain client not ready."; loading = false; return; }
-    try {
-      console.log("[Lobby] Looking for waiting games...");
-      const allGames: Record[] = await client.callZome({
-        cap_secret: null, role_name: "ping_2_pong", zome_name: "ping_2_pong",
-        fn_name: "get_all_games", payload: null
-      });
-      console.log(`[Lobby] Found ${allGames ? allGames.length : 0} total games.`);
+  loading = true;
+  statusMessage = null;
+  invitationStatus = null;
 
-      let joinableGame: Record | null = null;
-      let myWaitingGame: Record | null = null;
-
-      if (allGames && Array.isArray(allGames)) {
-        for (const r of allGames) {
-            console.log("[Lobby] --- Checking Game Record ---");
-            console.log("[Lobby] Record Action Hash:", encodeHashToBase64(r.signed_action.hashed.hash));
-            let actualEntry: Entry | undefined = undefined;
-            const recordEntry = r.entry;
-            if (recordEntry && typeof recordEntry === 'object' && 'Present' in recordEntry && (recordEntry as any).Present) {
-                actualEntry = (recordEntry as { Present: Entry }).Present;
-            }
-            if (actualEntry && actualEntry.entry_type === 'App' && actualEntry.entry instanceof Uint8Array) {
-                try {
-                    const decodedGame = decode(actualEntry.entry) as Game;
-                    const isWaiting = decodedGame.game_status === "Waiting";
-                    const p2IsNull = decodedGame.player_2 === null;
-                    const p1Exists = !!decodedGame.player_1;
-
-                    if (!p1Exists) continue; // Skip invalid game
-
-                    const isMyGame = encodeHashToBase64(decodedGame.player_1) === encodeHashToBase64(client.myPubKey);
-                    console.log("[Lobby] Game State:", { status: decodedGame.game_status, p2: decodedGame.player_2 ? 'Set' : 'Null', isMyGame });
-
-                    // Condition 1: Find a waiting game created by someone else to join
-                    if (isWaiting && p2IsNull && !isMyGame) {
-                        joinableGame = r;
-                        console.log("[Lobby] Found joinable game:", encodeHashToBase64(r.signed_action.hashed.hash));
-                        break; // Prioritize joining over waiting
-                    }
-                    // Condition 2: Identify my own waiting game
-                    if (isWaiting && p2IsNull && isMyGame) {
-                        myWaitingGame = r;
-                        console.log("[Lobby] Found my own waiting game:", encodeHashToBase64(r.signed_action.hashed.hash));
-                    }
-                } catch (decodeError) {
-                    console.error("[Lobby] Msgpack decoding error during filter:", decodeError, actualEntry);
-                }
-            } else {
-                console.log(`[Lobby] Record ${encodeHashToBase64(r.signed_action.hashed.hash)} has no present App entry or unexpected structure.`);
-            }
-        }
-      }
-
-      // --- Logic for joining vs creating vs waiting ---
-      if (joinableGame && joinableGame.signed_action?.hashed?.hash) {
-        // *** JOIN existing game ***
-        const gameToJoinHash: ActionHash = joinableGame.signed_action.hashed.hash;
-        console.log("[Lobby] Attempting to join game:", encodeHashToBase64(gameToJoinHash));
-        try {
-            await client.callZome({ cap_secret: null, role_name: "ping_2_pong", zome_name: "ping_2_pong", fn_name: "join_game", payload: gameToJoinHash });
-            console.log("[Lobby] Successfully called join_game backend function. Waiting for GameStarted signal...");
-            statusMessage = "Joining game... Waiting for confirmation."; // Wait for signal
-        } catch (joinError) {
-            console.error("[Lobby] Error calling join_game:", joinError);
-            statusMessage = `Failed to join game: ${(joinError as HolochainError).message}`;
-        }
-      } else if (myWaitingGame) {
-        // *** ALREADY WAITING in my own game ***
-        console.log("[Lobby] Already have a waiting game. Continuing to wait.");
-        statusMessage = "Already waiting for an opponent in your created game.";
-      } else {
-         // *** CREATE a new game ***
-         console.log("[Lobby] No suitable waiting games found, creating new game...");
-         const createPayload = { player_1: client.myPubKey, player_2: null };
-         try {
-             const newGameRecord: Record = await client.callZome({ cap_secret: null, role_name: "ping_2_pong", zome_name: "ping_2_pong", fn_name: "create_game", payload: createPayload });
-             const newGameHash: ActionHash = newGameRecord.signed_action.hashed.hash;
-             console.log("[Lobby] Created new game, waiting for opponent:", encodeHashToBase64(newGameHash));
-             statusMessage = "Game created. Waiting for an opponent to join..."; // Wait for signal
-         } catch (createError) {
-              console.error("[Lobby] Error creating game:", createError);
-              statusMessage = `Failed to create game: ${(createError as HolochainError).message}`;
-         }
-      }
-    } catch (e) { console.error("Error in joinOrCreateGame:", e); statusMessage = (e as HolochainError).message; }
-    finally { loading = false; }
+  if (!client) {
+    statusMessage = "Holochain client not ready.";
+    loading = false;
+    return;
   }
 
-  // Executed when "Invite" button is clicked
-  async function sendInvitation(invitee: AgentPubKey) {
-      invitationStatus = null; statusMessage = null; // Clear messages
-      if (!client) { invitationStatus = "Holochain client not ready."; return; }
-    try {
-      // 1. Create the game entry with both players specified, status defaults to Waiting
-      console.log("Creating game for invitation to:", encodeHashToBase64(invitee));
-      const createPayload = { player_1: client.myPubKey, player_2: invitee };
-      const gameRecord: Record = await client.callZome({
-          cap_secret: null, role_name: "ping_2_pong", zome_name: "ping_2_pong",
-          fn_name: "create_game", payload: createPayload
+  try {
+    // 1. fetch every game ever created
+    const allGames: Record[] = await client.callZome({
+      cap_secret: null,
+      role_name: "ping_2_pong",
+      zome_name: "ping_2_pong",
+      fn_name: "get_all_games",
+      payload: null
+    });
+
+    console.log(`[Lobby] Found ${allGames.length} total games.`);
+
+    let joinableGame: Record | null = null;
+    let myWaitingGame: Record | null = null;
+
+    // 2. walk through them, but **look at the latest revision**
+    for (const original of allGames) {
+      const latest: Record = await client.callZome({
+        cap_secret: null,
+        role_name: "ping_2_pong",
+        zome_name: "ping_2_pong",
+        fn_name: "get_latest_game",
+        payload: original.signed_action.hashed.hash           // original hash
       });
-      const gameHash: ActionHash = gameRecord.signed_action.hashed.hash;
-      console.log("Game created for invitation:", encodeHashToBase64(gameHash));
 
-      // 2. Prepare the invitation payload (matches backend Invitation struct)
-      const invitationPayload: { game_id: ActionHash; inviter: AgentPubKey; message: string; } = {
-        game_id: gameHash,
-        inviter: client.myPubKey,
-        message: "You have been invited to play Pong!",
-      };
+      const decoded = decode((latest.entry as any).Present.entry) as Game;
 
-      // 3. Send the invitation using the specific backend function
-      console.log("Sending invitation...");
-      await client.callZome({
-        cap_secret: null, role_name: "ping_2_pong", zome_name: "ping_2_pong",
-        fn_name: "send_invitation", // Use the correct function
-        payload: invitationPayload    // Send the Invitation object
-      });
-      console.log("Invitation sent.");
+      const waitingAndOpen =
+        decoded.game_status === "Waiting" && decoded.player_2 === null;
 
-      // 4. DO NOT navigate the inviter immediately. Wait for GameStarted signal.
-      invitationStatus = "Invitation sent. Waiting for response..."; // Set status message
+      const isMine =
+        encodeHashToBase64(decoded.player_1) ===
+        encodeHashToBase64(client.myPubKey);
 
-    } catch (e) {
-        console.error("Error sending invitation:", e);
-        const errorData = (e as any)?.data?.data;
-        invitationStatus = errorData ? `${(e as Error).message}: ${errorData}` : (e as Error).message;
+      if (waitingAndOpen && !isMine) {
+        joinableGame = original;           // found something to join
+        break;
+      }
+
+      if (waitingAndOpen && isMine) {
+        myWaitingGame = original;          // remember my own “open” game
+      }
     }
+
+    // 3. act on the result of the scan
+    if (joinableGame) {
+      // ---- JOIN a game someone else created ----
+      await client.callZome({
+        cap_secret: null,
+        role_name: "ping_2_pong",
+        zome_name: "ping_2_pong",
+        fn_name: "join_game",
+        payload: joinableGame.signed_action.hashed.hash
+      });
+      statusMessage = "Joining game… waiting for confirmation.";
+    } else if (myWaitingGame) {
+      // ---- I already created a waiting game earlier ----
+      statusMessage = "Already waiting for an opponent in your game.";
+    } else {
+      // ---- CREATE a brand-new game ----
+      const record: Record = await client.callZome({
+        cap_secret: null,
+        role_name: "ping_2_pong",
+        zome_name: "ping_2_pong",
+        fn_name: "create_game",
+        payload: { player_1: client.myPubKey, player_2: null }
+      });
+      console.log(
+        "[Lobby] Created new game, waiting:",
+        encodeHashToBase64(record.signed_action.hashed.hash)
+      );
+      statusMessage = "Game created. Waiting for an opponent…";
+    }
+  } catch (e) {
+    console.error("Error in joinOrCreateGame:", e);
+    statusMessage = (e as HolochainError).message;
+  } finally {
+    loading = false;
   }
+}
+// Executed when "Invite" button is clicked
+async function sendInvitation(invitee: AgentPubKey) {
+  invitationStatus = null;
+  statusMessage    = null;               // Clear UI messages first
+
+  if (!client) {
+    invitationStatus = "Holochain client not ready.";
+    return;
+  }
+
+  try {
+    // ── 1. Create the Game entry (still “Waiting”) ──────────────────────────
+    console.log("Creating game for invitation to:", encodeHashToBase64(invitee));
+
+    const createPayload = {                    // matches create_game input
+      player_1: client.myPubKey,
+      player_2: invitee                        // fine to pre-fill – backend will ignore if you prefer
+    };
+
+    const gameRecord: Record = await client.callZome({
+      cap_secret : null,
+      role_name  : "ping_2_pong",
+      zome_name  : "ping_2_pong",
+      fn_name    : "create_game",
+      payload    : createPayload
+    });
+
+    const gameHash: ActionHash = gameRecord.signed_action.hashed.hash;
+    console.log("Game created for invitation:", encodeHashToBase64(gameHash));
+
+    // ── 2. Build *new* InvitationPayload (invitee not inviter) ─────────────
+    const invitationPayload = {
+      game_id : gameHash,
+      invitee : invitee,                       
+      message : "You have been invited to play Pong!"
+    };
+
+    // ── 3. Send the invitation via the new zome extern ─────────────────────
+    console.log("Sending invitation...");
+    await client.callZome({
+      cap_secret : null,
+      role_name  : "ping_2_pong",
+      zome_name  : "ping_2_pong",
+      fn_name    : "send_invitation",          // the extern you just added
+      payload    : invitationPayload
+    });
+    console.log("Invitation sent.");
+
+    // ── 4. Stay on the lobby; wait for GameStarted signal ──────────────────
+    invitationStatus = "Invitation sent. Waiting for response...";
+
+  } catch (e) {
+    console.error("Error sending invitation:", e);
+    const errData = (e as any)?.data?.data;
+    invitationStatus = errData
+      ? `${(e as Error).message}: ${errData}`
+      : (e as Error).message;
+  }
+}
 
   // Periodically fetch online users and their game status
   async function fetchOnlineUsersAndStatus() {

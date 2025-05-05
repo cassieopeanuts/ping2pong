@@ -8,7 +8,7 @@
   import { decode } from "@msgpack/msgpack";
   // Import local types including the specific signal structures if needed for receiving
   // Note: Signal types are used here for clarity but aren't strictly required if only checking `signalPayload.type`
-  import type { Game, Score, GameStatus, UpdateGameInput, PaddleUpdateSignal, BallUpdateSignal, GameOverSignal } from "../ping_2_pong/types";
+  import type { Game, Score, GameStatus, UpdateGameInput, PaddleUpdateSignal, BallUpdateSignal, GameOverSignal, ScoreUpdateSignal } from "../ping_2_pong/types";
 
   // Create dispatcher to send events up to the parent (App.svelte)
   const dispatch = createEventDispatcher();
@@ -291,48 +291,62 @@
     } catch (e) { console.error("Error sending ball update signal:", e); }
   }
 
+  async function sendScoreUpdate() {
+    if (!client || !liveGame) return;
+    try {
+      await client.callZome({
+        cap_secret: null,
+        role_name : "ping_2_pong",
+        zome_name : "ping_2_pong",
+        fn_name   : "send_score_update",            // <- backend helper you added earlier
+        payload: {
+          game_id: gameId,
+          score1 : score.player1,
+          score2 : score.player2
+        }
+      });
+    } catch (e) { console.error("Score update failed:", e); }
+  }
+
   // Sets up the listener for incoming signals related to this specific game
   function subscribeToGameSignals() {
-    if (!client) return undefined;
+    if (!client) return;
 
-    // Register the callback function to handle incoming signals
-    return client.on("signal", (signalPayload: any) => {
-      // Basic validation and checks before processing
-      // Check for the { App: { payload: { type: ... } } } structure
-      const actualSignal = signalPayload?.App?.payload;
-      if (gameOver || !liveGame || !actualSignal?.type || !actualSignal.game_id) return;
+    return client.on("signal", (raw: any) => {
+      const s = raw?.App?.payload;
+      if (!s || !s.type || gameOver) return;
+      if (encodeHashToBase64(s.game_id) !== encodeHashToBase64(gameId)) return;
 
-      // IMPORTANT: Ensure the signal is for the current game instance
-      if (encodeHashToBase64(actualSignal.game_id) !== encodeHashToBase64(gameId)) return;
-
-      const myPubKeyB64 = encodeHashToBase64(playerKey);
+      const meB64 = encodeHashToBase64(playerKey);
 
       try {
-          // Process PaddleUpdate signals (update opponent's paddle)
-          if (actualSignal.type === "PaddleUpdate") {
-            // Check if the signal came from the other player
-            if (actualSignal.player && typeof actualSignal.player === 'object' && actualSignal.player.length === 39 && encodeHashToBase64(actualSignal.player) !== myPubKeyB64) {
-              // Update local state of the opponent's paddle
-              if (isPlayer1) paddle2Y = actualSignal.paddle_y;
-              else if (isPlayer2) paddle1Y = actualSignal.paddle_y;
+        switch (s.type) {
+          case "PaddleUpdate":
+            if (encodeHashToBase64(s.player) !== meB64) {
+              if (isPlayer1) paddle2Y = s.paddle_y;
+              else           paddle1Y = s.paddle_y;
             }
-          // Process BallUpdate signals (only Player 2 reacts to these)
-          } else if (actualSignal.type === "BallUpdate") {
-            if (!isPlayer1) { // Player 2 updates its local ball state based on Player 1's signal
-              ball.x = actualSignal.ball_x;
-              ball.y = actualSignal.ball_y;
-              ball.dx = actualSignal.ball_dx;
-              ball.dy = actualSignal.ball_dy;
+            break;
+
+          case "BallUpdate":
+            if (!isPlayer1) {
+              ball.x = s.ball_x; ball.y = s.ball_y;
+              ball.dx = s.ball_dx; ball.dy = s.ball_dy;
             }
-          // Process GameOver signals
-          } else if (actualSignal.type === "GameOver") {
-            console.log("Received GameOver signal:", actualSignal);
-            // Safely extract the winner's public key (can be null)
-            const remoteWinner = (actualSignal.winner && typeof actualSignal.winner === 'object' && actualSignal.winner.length === 39) ? actualSignal.winner as AgentPubKey : null;
-            // Trigger the local game over state if not already triggered
-            if (!gameOver) handleRemoteGameOver(remoteWinner);
-          }
-      } catch (e) { console.error("Error processing signal:", actualSignal, e); }
+            break;
+
+          case "ScoreUpdate":                            /* <-- NEW */
+            score.player1 = s.score1;
+            score.player2 = s.score2;
+            break;
+
+          case "GameOver":
+            handleRemoteGameOver(
+              s.winner ?? null as AgentPubKey|null
+            );
+            break;
+        }
+      } catch(e) { console.error("signal parse err", e); }
     });
   }
 
@@ -369,12 +383,10 @@
 
     // Check if a player scored (ball went past a paddle)
     let scored = false;
-    if (ball.x + BALL_RADIUS < 0) { // P2 scores
-      score.player2++;
-      scored = true;
+    if (ball.x + BALL_RADIUS < 0) {          // P2 scores
+      score.player2++; scored = true; sendScoreUpdate();
     } else if (ball.x - BALL_RADIUS > CANVAS_WIDTH) { // P1 scores
-      score.player1++;
-      scored = true;
+      score.player1++; scored = true; sendScoreUpdate();
     }
 
     // Handle the outcome of the physics update

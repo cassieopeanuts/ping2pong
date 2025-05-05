@@ -13,10 +13,24 @@ use hdk::prelude::*;
 use ping_2_pong_integrity::*;
 
 
+/// ---------- 1. grant the capability on startup ----------
 #[hdk_extern]
-pub fn init(_: ()) -> ExternResult<InitCallbackResult> {
+fn init(_: ()) -> ExternResult<InitCallbackResult> {
+    // everybody can call `receive_remote_signal`
+    let grant = CapGrantEntry {
+        tag: "remote-signal".into(),
+        access: CapAccess::Unrestricted,
+        functions: GrantedFunctions::Listed(
+            vec![("ping_2_pong".into(), "receive_remote_signal".into())]
+                .into_iter()
+                .map(Into::into)
+                .collect(),
+        ),
+    };
+    create_cap_grant(grant)?;
     Ok(InitCallbackResult::Pass)
 }
+
 
 // Signal enum definition
 #[derive(Serialize, Deserialize, Debug)]
@@ -52,6 +66,11 @@ pub enum Signal {
         ball_y: u32,
         ball_dx: i32,
         ball_dy: i32,
+    },
+    ScoreUpdate {
+        game_id: ActionHash,
+        score1:  u32,
+        score2:  u32,
     },
     GameOver {
         game_id: ActionHash,
