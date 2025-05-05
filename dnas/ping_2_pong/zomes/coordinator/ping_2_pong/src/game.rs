@@ -481,30 +481,6 @@ pub struct InvitationPayload {
     pub message : String,
 }
 
-/// Sends a GameInvitation signal, typically broadcast.
-#[hdk_extern]
-pub fn send_invitation(payload: InvitationPayload) -> ExternResult<()> {
-    // build the signal – inviter is *this* agent
-    let signal = Signal::GameInvitation {
-        game_id : payload.game_id.clone(),
-        inviter : agent_info()?.agent_latest_pubkey,
-        message : payload.message.clone(),
-    };
-
-    // fire it locally (so the inviter’s UI updates)
-    emit_signal(&signal)?;
-
-    // …and remotely to the invitee
-    let _ = call_remote(
-        payload.invitee,
-        "ping_2_pong",
-        "receive_remote_signal".into(),
-        None,
-        &signal,                     // send by reference – the macro handles SB
-    );
-
-    Ok(())
-}
 
 /// Data structure for game invitations.
 #[derive(Serialize, Deserialize, Debug, Clone, SerializedBytes)]

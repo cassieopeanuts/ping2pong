@@ -7,6 +7,7 @@ pub mod score;
 pub mod statistics;
 pub mod utils;
 pub mod signals;
+pub mod invitations;
 
 use hdk::prelude::*;
 // Use integrity crate types (EntryTypes, LinkTypes)

@@ -142,7 +142,7 @@ async function sendInvitation(invitee: AgentPubKey) {
 
     const createPayload = {                    // matches create_game input
       player_1: client.myPubKey,
-      player_2: invitee                        // fine to pre-fill – backend will ignore if you prefer
+      player_2: null                        // fine to pre-fill – backend will ignore if you prefer
     };
 
     const gameRecord: Record = await client.callZome({

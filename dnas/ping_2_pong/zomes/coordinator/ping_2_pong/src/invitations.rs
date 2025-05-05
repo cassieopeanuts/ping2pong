@@ -43,8 +43,7 @@ pub fn send_invitation(payload: InvitationPayload) -> ExternResult<()> {
 /// Player-2 clicks **Accept** in the UI
 #[hdk_extern]
 pub fn accept_invitation(payload: AcceptInvitationPayload) -> ExternResult<()> {
-    /* Delegate to the canonical `join_game` helper so that:
-       • the Game entry is updated
-       • the GameStarted signal is emitted to both players           */
-    join_game(payload.game_id)
+    // delegate, then discard the Record so our signature stays `()`
+    join_game(payload.game_id).map(|_updated_record| ())
+    //                └──────── throw the value away, keep only the `Ok`
 }
