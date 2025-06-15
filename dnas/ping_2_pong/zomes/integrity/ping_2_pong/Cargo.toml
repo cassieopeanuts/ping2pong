@@ -1,0 +1,14 @@
+[package]
+name = "ping_2_pong_integrity"
+version = "0.0.1"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+name = "ping_2_pong_integrity"
+
+[dependencies]
+hdi = { workspace = true }
+serde = { workspace = true }
+log = "0.4.25"
+hdk = "0.4.1"

@@ -1,0 +1,13 @@
+manifest_version: '1'
+name: ping_2_pong
+integrity:
+  origin_time: 1738223185381309
+  zomes:
+  - name: ping_2_pong_integrity
+    bundled: '../../../target/wasm32-unknown-unknown/release/ping_2_pong_integrity.wasm'
+coordinator:
+  zomes:
+  - name: ping_2_pong
+    bundled: '../../../target/wasm32-unknown-unknown/release/ping_2_pong.wasm'
+    dependencies:
+    - name: ping_2_pong_integrity

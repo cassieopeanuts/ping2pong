@@ -1,0 +1,13 @@
+[package]
+name = "ping_2_pong"
+version = "0.0.1"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+name = "ping_2_pong"
+
+[dependencies]
+hdk = { workspace = true }
+serde = { workspace = true }
+ping_2_pong_integrity = { workspace = true }
