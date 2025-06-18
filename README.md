@@ -68,7 +68,7 @@ You will also have its subcomponent `ping2pong.happ` in the same folder`.
 
 For convenience, a pre-packaged `ping2pong.webhapp` file is included in this repository. You can download it directly from the following location:
 
--   [./workdir/ping2pong.webhapp](./workdir/ping2pong.webhapp)
+-   [./workdir/ping2pong.webhapp](./workdir/ping2pong.zip)
 
 ## Documentation
 
