@@ -1,5 +1,17 @@
 # ping2pong
-Classic Game of Pong built on Holochain. Game utilizes Holochain ephemeral signals for ball and paddle position propagation between players. 
+
+**ping2pong** is a modern implementation of the classic arcade game Pong, rebuilt with a decentralized architecture powered by Holochain. It leverages Holochain's capabilities to manage game state and player interactions in a peer-to-peer manner, offering a unique take on familiar gameplay. This project showcases how Holochain can be used for real-time applications, utilizing ephemeral signals for propagating ball and paddle positions between players.
+
+## Project Overview and Special Features
+
+**ping2pong** uses **Holochain's ephemeral signals** for managing real-time game events. This allows for low-latency, peer-to-peer synchronization of crucial game elements like ball and paddle positions directly between players, ensuring smooth and responsive gameplay.
+
+Key features of **ping2pong** include:
+
+*   **Decentralized Gameplay:** Built on Holochain, all game logic and data are managed in a distributed manner.
+*   **Real-time P2P Sync:** Utilizes Holochain signals for instant updates of game state between players.
+*   **Invitation System:** Challenge other players to a match through an intuitive invitation system.
+*   **Global Chat:** Communicate with other players in a global chat room.
 
 ## Environment Setup
 
