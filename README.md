@@ -1,6 +1,6 @@
 # ping2pong
 
-**ping2pong** is a modern implementation of the classic arcade game Pong, rebuilt with a decentralized architecture powered by Holochain. It leverages Holochain's capabilities to manage game state and player interactions in a peer-to-peer manner, offering a unique take on familiar gameplay. This project showcases how Holochain can be used for real-time applications, utilizing ephemeral signals for propagating ball and paddle positions between players.
+**ping2pong** is a modern implementation of the classic arcade game Pong, rebuilt with a decentralized architecture powered by Holochain (0.4.0v). It leverages Holochain's capabilities to manage game state and player interactions in a peer-to-peer manner, offering a unique take on familiar gameplay. This project showcases how Holochain can be used for real-time applications, utilizing ephemeral signals for propagating ball and paddle positions between players.
 
 ## Project Overview and Special Features
 
@@ -56,11 +56,19 @@ This will also bring up the Holochain Playground for advanced introspection of t
 
 To package the web happ:
 ``` bash
+npm run build:happ
+
 npm run package
 ```
 
 You'll have the `ping2pong.webhapp` in `workdir`. This is what you should distribute so that the Holochain Launcher can install it.
 You will also have its subcomponent `ping2pong.happ` in the same folder`.
+
+## OR download already Packaged Application (`.webhapp`) and install in  ([Holochain Launcher](https://github.com/holochain/launcher))
+
+For convenience, a pre-packaged `ping2pong.webhapp` file is included in this repository. You can download it directly from the following location:
+
+-   [./workdir/ping2pong.webhapp](./workdir/ping2pong.webhapp)
 
 ## Documentation
 
