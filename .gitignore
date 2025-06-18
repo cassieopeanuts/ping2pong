@@ -17,7 +17,7 @@
 # generated and compiled files
 *.happ
 *.webhapp
-*.zip
+
 *.dna
 
 # temporary files
