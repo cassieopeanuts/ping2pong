@@ -328,9 +328,6 @@ fn validate_presence_link(create_link: &CreateLink) -> ExternResult<ValidateCall
     if create_link.base_address.clone().into_entry_hash().is_none() && create_link.base_address.clone().into_agent_pub_key().is_none() {
          return Ok(ValidateCallbackResult::Invalid("Base for Presence link must be an EntryHash or AgentPubKey".into()));
     }
-    // Target Check: Must be ActionHash
-    if create_link.target_address.clone().into_action_hash().is_none() {
-        return Ok(ValidateCallbackResult::Invalid("Presence link target must be an ActionHash".into()));
-    }
+    // Target Check: Allow ActionHash, AgentPubKey, or EntryHash
     Ok(ValidateCallbackResult::Valid)
 }

@@ -40,7 +40,6 @@ pub fn create_player(player: Player) -> ExternResult<Record> {
     // Link player to the "all_players" anchor
     const ALL_PLAYERS_ANCHOR_STR: &str = "all_players";
     let all_players_path = Path::from(ALL_PLAYERS_ANCHOR_STR);
-    // Optional: all_players_path.ensure()?; // Ensure the path entry itself exists if needed by your design
     let all_players_anchor_hash = all_players_path.path_entry_hash()?;
     create_link(
         all_players_anchor_hash.clone(), // Base for the link
@@ -48,6 +47,9 @@ pub fn create_player(player: Player) -> ExternResult<Record> {
         LinkTypes::AllPlayersAnchorToAgentPubKey,
         LinkTag::new(vec![]) // Empty tag
     )?;
+
+    // Publish presence immediately so this player is announced on the P2P network
+    let _ = crate::game::publish_presence(());
 
     let record = get(player_action_hash.clone(), GetOptions::default())?.ok_or(wasm_error!( WasmErrorInner::Guest("Could not find the newly created Player".to_string()) ))?;
     Ok(record)

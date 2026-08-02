@@ -137,25 +137,37 @@ const result = await E.runPromise(
 ## Svelte 5 Reactive Store Integration
 
 ```typescript
-// stores/myEntry.svelte.ts
+// stores/myEntry.ts
 import { AppAgentWebsocket } from "@holochain/client";
 
 export class MyEntryStore {
-  entries = $state<MyEntry[]>([]);
-  loading = $state(false);
-  error = $state<string | null>(null);
+  entries: MyEntry[] = [];
+  loading = false;
+  error: string | null = null;
 
   private client: AppAgentWebsocket;
+  private unsubscribeSignal?: () => void;
 
   constructor(client: AppAgentWebsocket) {
     this.client = client;
 
-    // Subscribe to signals for real-time updates
-    client.on("signal", (signal) => {
-      if (signal.type !== "App") return;
-      const { zome_name, payload } = signal.data.payload;
-      if (zome_name === "my_zome") this.handleSignal(payload);
+    // Subscribe to signals for real-time updates and save unsubscribe handle
+    this.unsubscribeSignal = client.on("signal", (signal) => {
+      let payload = signal;
+      if (signal?.App?.payload) payload = signal.App.payload;
+      else if (signal?.value?.payload) payload = signal.value.payload;
+      
+      if (payload?.zome_name === "my_zome") {
+        this.handleSignal(payload);
+      }
     });
+  }
+
+  destroy() {
+    // Unsubscribe from Holochain signals on component unmount to prevent memory leaks
+    if (this.unsubscribeSignal) {
+      this.unsubscribeSignal();
+    }
   }
 
   async loadAll() {

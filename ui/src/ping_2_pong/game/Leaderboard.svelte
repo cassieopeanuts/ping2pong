@@ -4,7 +4,7 @@
   import { encodeHashToBase64 } from "@holochain/client"; // For converting raw AgentPubKey
   import { clientContext, type ClientContext } from "../../contexts";
   import { HOLOCHAIN_ROLE_NAME, HOLOCHAIN_ZOME_NAME } from "../../holochainConfig";
-  import { getOrFetchProfile, type DisplayProfile } from "../../stores/profilesStore";
+  import { getOrFetchProfile, profilesCache, type DisplayProfile } from "../../stores/profilesStore";
   import { truncatePubkey } from "../../utils";
 
   let client: AppClient;
@@ -19,6 +19,13 @@
   let leaderboardData: LeaderboardEntryData[] = [];
   let isLoading: boolean = true;
   let errorMessage: string | null = null;
+
+  function getNickname(playerKeyB64: AgentPubKeyB64, fallbackNickname?: string): string {
+      if (fallbackNickname) return fallbackNickname;
+      const cached = $profilesCache.get(playerKeyB64);
+      if (cached && cached.nickname) return cached.nickname;
+      return truncatePubkey(playerKeyB64, 6, 4);
+  }
 
   onMount(async () => {
     try {
@@ -109,7 +116,7 @@
         {#each leaderboardData as entry, i}
           <tr>
             <td>{i + 1}</td>
-            <td title={entry.player_key_b64}>{entry.nickname || truncatePubkey(entry.player_key_b64, 6, 4)}</td>
+            <td title={entry.player_key_b64}>{getNickname(entry.player_key_b64, entry.nickname)}</td>
             <td>{entry.total_points}</td>
             <td>{entry.games_played}</td>
           </tr>

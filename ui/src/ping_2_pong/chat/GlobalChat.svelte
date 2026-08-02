@@ -6,7 +6,7 @@
   import { truncatePubkey } from '../../utils';
   import { HOLOCHAIN_ROLE_NAME, HOLOCHAIN_ZOME_NAME } from '../../holochainConfig';
   import { writable, get as getStoreValue } from 'svelte/store'; // Added Svelte store imports
-  import { getOrFetchProfile, type DisplayProfile } from '../../stores/profilesStore'; // Import profile store
+  import { getOrFetchProfile, profilesCache, type DisplayProfile } from '../../stores/profilesStore'; // Import profile store
 
   let messageContent: string = "";
   let chatBox: HTMLElement; // For auto-scrolling
@@ -18,33 +18,13 @@
   let client: AppClient; // To be initialized in onMount
   const appClientContext = getContext<ClientContext>(clientContext); // Typed getContext
 
-  // Store for fetched sender profiles
-  let senderProfiles = writable<Map<AgentPubKeyB64, DisplayProfile | null>>(new Map());
-
-  // Reactive block to fetch profiles for new senders
-  $: if ($globalChatMessages && client) {
-    const currentProfiles = getStoreValue(senderProfiles);
-    for (const msg of $globalChatMessages) {
-      if (!currentProfiles.has(msg.sender)) {
-        // Set to null initially to indicate loading / prevent multiple fetches
-        senderProfiles.update(m => {
-          const newMap = new Map(m);
-          newMap.set(msg.sender, null);
-          return newMap;
-        });
-        getOrFetchProfile(client, msg.sender).then(profile => {
-          if (profile) {
-            senderProfiles.update(m => {
-              const newMap = new Map(m);
-              newMap.set(msg.sender, profile);
-              return newMap;
-            });
-          }
-          // If profile is null (error or not found), it remains null in the map,
-          // which will cause fallback to truncatePubkey in the template.
-        });
-      }
+  function getSenderNickname(senderB64: string): string {
+    const cached = $profilesCache.get(senderB64);
+    if (cached && cached.nickname) return cached.nickname;
+    if (client) {
+      getOrFetchProfile(client, senderB64);
     }
+    return truncatePubkey(senderB64, 4, 4);
   }
 
   // Removed old getClient() as client is now initialized in onMount and passed around.
@@ -137,10 +117,9 @@
   <h4>Global Chat</h4>
   <div class="chat-messages-placeholder" bind:this={chatBox}>
     {#each $globalChatMessages as msg (msg.timestamp.toString() + msg.sender)}
-      {@const profile = $senderProfiles.get(msg.sender)}
       <p>
-        <span title={msg.sender} class="sender"> <!-- Added class="sender" for consistent styling if needed -->
-          {profile?.nickname || truncatePubkey(msg.sender, 4, 4)}:
+        <span title={msg.sender} class="sender">
+          {getSenderNickname(msg.sender)}:
         </span>
         <!-- Message content will be styled by '.chat-messages-placeholder p' -->
         {msg.content}

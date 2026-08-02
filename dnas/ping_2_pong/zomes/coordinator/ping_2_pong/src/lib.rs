@@ -28,17 +28,12 @@ pub struct ChatMessagePayload {
 
 /// ---------- 1. grant the capability on startup ----------
 #[hdk_extern]
-fn init(_: ()) -> ExternResult<InitCallbackResult> {
-    // everybody can call `receive_remote_signal`
+pub fn init(_: ()) -> ExternResult<InitCallbackResult> {
+    // everybody can call remote signals and functions
     let grant = CapGrantEntry {
         tag: "remote-signal".into(),
         access: CapAccess::Unrestricted,
-        functions: GrantedFunctions::Listed(
-            vec![("ping_2_pong".into(), "receive_remote_signal".into())]
-                .into_iter()
-                .map(Into::into)
-                .collect(),
-        ),
+        functions: GrantedFunctions::All,
     };
     create_cap_grant(grant)?;
     Ok(InitCallbackResult::Pass)
@@ -76,12 +71,17 @@ pub enum Signal {
     PaddleUpdate {
         game_id: ActionHash,
         player: AgentPubKey,
-        paddle_y: u32,
+        paddle_y: i32,
+    },
+    PaddleHit {
+        game_id: ActionHash,
+        player: AgentPubKey,
+        ball_y: i32,
     },
     BallUpdate {
         game_id: ActionHash,
-        ball_x: u32,
-        ball_y: u32,
+        ball_x: i32,
+        ball_y: i32,
         ball_dx: i32,
         ball_dy: i32,
     },

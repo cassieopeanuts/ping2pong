@@ -11,8 +11,20 @@ export interface DisplayProfile {
   agentKeyB64: string;
 }
 
-const profilesCache = writable<Map<AgentPubKeyB64, DisplayProfile>>(new Map());
+export const profilesCache = writable<Map<AgentPubKeyB64, DisplayProfile>>(new Map());
 const fetchingStatus = writable<Map<AgentPubKeyB64, boolean>>(new Map()); // To prevent concurrent fetches
+
+export function cacheProfile(agentKeyToCache: AgentPubKey | AgentPubKeyB64, nickname: string) {
+  const agentKeyB64 = typeof agentKeyToCache === 'string' ? agentKeyToCache : encodeHashToBase64(agentKeyToCache);
+  if (!agentKeyB64 || !nickname) return;
+  profilesCache.update(cache => {
+    const existing = cache.get(agentKeyB64);
+    if (existing && existing.nickname === nickname) return cache; // Skip redundant updates
+    const newCache = new Map(cache);
+    newCache.set(agentKeyB64, { nickname, agentKeyB64 });
+    return newCache;
+  });
+}
 
 // Function to get a profile from cache or fetch if not present
 export async function getOrFetchProfile(client: AppClient, agentKeyToFetch: AgentPubKey | AgentPubKeyB64): Promise<DisplayProfile | null> {
@@ -25,15 +37,14 @@ export async function getOrFetchProfile(client: AppClient, agentKeyToFetch: Agen
 
   const isFetching = getStoreValue(fetchingStatus).get(agentKeyB64);
   if (isFetching) {
-    // Optional: wait for the ongoing fetch to complete, or return null/stale immediately
-    // For simplicity, returning null here, component can retry or show loading.
-    // A more advanced version could return a promise that resolves when the ongoing fetch completes.
-    console.log(`[profilesStore] Already fetching profile for ${agentKeyB64}, returning null for now.`);
     return null;
   }
 
-  fetchingStatus.update(s => s.set(agentKeyB64, true));
-  console.log(`[profilesStore] Fetching profile for ${agentKeyB64}`);
+  fetchingStatus.update(s => {
+    const newStatus = new Map(s);
+    newStatus.set(agentKeyB64, true);
+    return newStatus;
+  });
 
   try {
     const record: Record | null = await client.callZome({
@@ -41,41 +52,45 @@ export async function getOrFetchProfile(client: AppClient, agentKeyToFetch: Agen
       role_name: HOLOCHAIN_ROLE_NAME,
       zome_name: HOLOCHAIN_ZOME_NAME,
       fn_name: "get_player_profile_by_agent_key",
-      payload: typeof agentKeyToFetch === 'string' ? decodeHashFromBase64(agentKeyToFetch) : agentKeyToFetch, // Ensure payload is AgentPubKey
+      payload: typeof agentKeyToFetch === 'string' ? decodeHashFromBase64(agentKeyToFetch) : agentKeyToFetch,
     });
 
     if (record && record.entry && (record.entry as any).Present) {
       const entry = (record.entry as any).Present.entry as Uint8Array;
-      const player = decode(entry) as Player; // Player type from integrity zome {player_name, player_key}
+      const player = decode(entry) as Player;
 
       const displayProfile: DisplayProfile = {
         nickname: player.player_name,
-        agentKeyB64: encodeHashToBase64(player.player_key), // Should match agentKeyB64 from input if it was AgentPubKey
+        agentKeyB64: encodeHashToBase64(player.player_key),
       };
 
-      // Verify consistency if original was AgentPubKey
-      if (typeof agentKeyToFetch !== 'string' && agentKeyB64 !== displayProfile.agentKeyB64) {
-        console.warn(`[profilesStore] Mismatch between fetched agentKeyB64 ${displayProfile.agentKeyB64} and input agentKeyB64 ${agentKeyB64}`);
-        // Potentially handle this error, e.g., by not caching or using the input key for caching.
-        // For now, we'll trust the fetched data but log a warning.
-      }
-
       profilesCache.update(cache => {
+        const existing = cache.get(agentKeyB64);
+        if (existing && existing.nickname === displayProfile.nickname) return cache;
         const newCache = new Map(cache);
-        newCache.set(agentKeyB64, displayProfile); // Use the consistent agentKeyB64 derived from input
+        newCache.set(agentKeyB64, displayProfile);
         return newCache;
       });
-      console.log(`[profilesStore] Fetched and cached profile for ${agentKeyB64}:`, displayProfile);
-      fetchingStatus.update(s => s.set(agentKeyB64, false));
+      fetchingStatus.update(s => {
+        const newStatus = new Map(s);
+        newStatus.set(agentKeyB64, false);
+        return newStatus;
+      });
       return displayProfile;
     } else {
-      console.log(`[profilesStore] No profile record found for ${agentKeyB64}.`);
-      fetchingStatus.update(s => s.set(agentKeyB64, false));
+      fetchingStatus.update(s => {
+        const newStatus = new Map(s);
+        newStatus.set(agentKeyB64, false);
+        return newStatus;
+      });
       return null;
     }
   } catch (e) {
-    console.error(`[profilesStore] Error fetching profile for ${agentKeyB64}:`, e);
-    fetchingStatus.update(s => s.set(agentKeyB64, false));
+    fetchingStatus.update(s => {
+      const newStatus = new Map(s);
+      newStatus.set(agentKeyB64, false);
+      return newStatus;
+    });
     return null;
   }
 }

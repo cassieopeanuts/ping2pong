@@ -199,11 +199,29 @@
           loadingMsg = null; // Clear loading message
           liveGame = fetchedGame; // Set the live game state
 
-          // Identify players based on the confirmed state
-          const myPubKeyB64 = encodeHashToBase64(playerKey);
-          isPlayer1 = encodeHashToBase64(liveGame.player_1) === myPubKeyB64;
-          // We know player_2 exists because we checked for it in fetchGameState
-          isPlayer2 = encodeHashToBase64(liveGame.player_2!) === myPubKeyB64;
+          function getPubkeyStr(pk: any): string {
+              if (!pk) return "";
+              if (typeof pk === "string") return pk;
+              try { return encodeHashToBase64(pk); } catch { return String(pk); }
+          }
+
+          // Identify players based on the confirmed state (using client.myPubKey as absolute authority)
+          const myKey = client?.myPubKey || playerKey;
+          const myPubKeyB64 = getPubkeyStr(myKey);
+          const p1B64 = getPubkeyStr(liveGame.player_1);
+          const p2B64 = getPubkeyStr(liveGame.player_2);
+
+          isPlayer1 = (p1B64 === myPubKeyB64);
+          isPlayer2 = (p2B64 === myPubKeyB64);
+
+          // Fallback if formatting differed: creator is P1, joiner is P2
+          if (!isPlayer1 && !isPlayer2) {
+              if (liveGame.player_2) {
+                  isPlayer2 = true;
+              } else {
+                  isPlayer1 = true;
+              }
+          }
           console.log(`[PongGame initializeGame] Player role identified: isPlayer1=${isPlayer1}, isPlayer2=${isPlayer2}`);
 
           // Fetch profiles
@@ -220,8 +238,8 @@
               paddle2Y = liveGame.player_2_paddle ?? (CANVAS_HEIGHT / 2 - PADDLE_HEIGHT / 2);
               ball.x = liveGame.ball_x ?? (CANVAS_WIDTH / 2);
               ball.y = liveGame.ball_y ?? (CANVAS_HEIGHT / 2);
-              ball.dx = 5 * (Math.random() > 0.5 ? 1 : -1);
-              ball.dy = 5 * (Math.random() > 0.5 ? 1 : -1);
+              ball.dx = 2.5 * (Math.random() > 0.5 ? 1 : -1);
+              ball.dy = 2.0 * (Math.random() > 0.5 ? 1 : -1);
               console.log("[PongGame initializeGame] Initialized positions.");
           }
 
@@ -243,6 +261,8 @@
       }
   }
 
+  let activeKeys = new Set<string>();
+
   // Starts the main game loop and sets up listeners
   function startGameLoop() {
       if (!ctx) {
@@ -251,55 +271,78 @@
           return;
       }
       if (animationFrameId) {
-          console.warn("[PongGame startGameLoop] Game loop already running?");
-          return; // Avoid starting multiple loops
+          cancelAnimationFrame(animationFrameId);
       }
+      if (unsubscribeFromSignals) {
+          unsubscribeFromSignals();
+          unsubscribeFromSignals = undefined;
+      }
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("keyup", handleKeyUp);
+
       console.log("[PongGame startGameLoop] Starting game loop and listeners.");
       gameOver = false; // Ensure game isn't marked over
       draw(); // Start drawing loop
       window.addEventListener("keydown", handleKeyDown); // Listen for keyboard input
+      window.addEventListener("keyup", handleKeyUp);
       unsubscribeFromSignals = subscribeToGameSignals(); // Subscribe to game signals
   }
 
-
-  // Handles keyboard input ('ArrowUp', 'ArrowDown', 'w', 's') for paddle movement
   function handleKeyDown(e: KeyboardEvent) {
-    if (gameOver || !liveGame) return; // Ignore input if game is over or not loaded
+    if (gameOver || !liveGame) return;
+    if (["ArrowUp", "ArrowDown", "KeyW", "KeyS", "w", "W", "s", "S"].includes(e.key) || ["ArrowUp", "ArrowDown", "KeyW", "KeyS"].includes(e.code)) {
+        e.preventDefault();
+    }
+    activeKeys.add(e.key);
+    activeKeys.add(e.code);
+    updatePaddleInput();
+  }
 
-    let moved = false; // Flag to track if the paddle actually moved
-    // Player 1 controls
+  function handleKeyUp(e: KeyboardEvent) {
+    activeKeys.delete(e.key);
+    activeKeys.delete(e.code);
+  }
+
+  function updatePaddleInput() {
+    if (gameOver || !liveGame) return;
+
+    const isUp = activeKeys.has("ArrowUp") || activeKeys.has("w") || activeKeys.has("W") || activeKeys.has("KeyW");
+    const isDown = activeKeys.has("ArrowDown") || activeKeys.has("s") || activeKeys.has("S") || activeKeys.has("KeyS");
+
+    let moved = false;
     if (isPlayer1) {
-      if (e.key === "ArrowUp" || e.key === "w" || e.key === "W") {
-        paddle1Y = Math.max(0, paddle1Y - PADDLE_SPEED); // Move up, clamp at top
+      if (isUp) {
+        paddle1Y = Math.max(0, paddle1Y - PADDLE_SPEED);
         moved = true;
-      } else if (e.key === "ArrowDown" || e.key === "s" || e.key === "S") {
-        paddle1Y = Math.min(CANVAS_HEIGHT - PADDLE_HEIGHT, paddle1Y + PADDLE_SPEED); // Move down, clamp at bottom
+      } else if (isDown) {
+        paddle1Y = Math.min(CANVAS_HEIGHT - PADDLE_HEIGHT, paddle1Y + PADDLE_SPEED);
         moved = true;
       }
-    // Player 2 controls
     } else if (isPlayer2) {
-      if (e.key === "ArrowUp" || e.key === "w" || e.key === "W") {
-        paddle2Y = Math.max(0, paddle2Y - PADDLE_SPEED); // Move up, clamp at top
+      if (isUp) {
+        paddle2Y = Math.max(0, paddle2Y - PADDLE_SPEED);
         moved = true;
-      } else if (e.key === "ArrowDown" || e.key === "s" || e.key === "S") {
-        paddle2Y = Math.min(CANVAS_HEIGHT - PADDLE_HEIGHT, paddle2Y + PADDLE_SPEED); // Move down, clamp at bottom
+      } else if (isDown) {
+        paddle2Y = Math.min(CANVAS_HEIGHT - PADDLE_HEIGHT, paddle2Y + PADDLE_SPEED);
         moved = true;
       }
     }
-    // If the paddle moved, send an update signal
     if (moved) sendPaddleUpdate();
   }
 
-  // Sends the current player's paddle position update signal to the backend
+  $: opponentKey = isPlayer1 ? liveGame?.player_2 : liveGame?.player_1;
+
+  // Sends the current player's paddle position update signal
   async function sendPaddleUpdate() {
-    // Throttle updates to prevent sending too many signals
+    // Throttle updates
     const now = Date.now();
     if (gameOver || !client || !liveGame || !gameId || (now - lastPaddleUpdate < UPDATE_INTERVAL)) return;
-    lastPaddleUpdate = now; // Update timestamp of last sent signal
+    lastPaddleUpdate = now; // Update timestamp
 
     // Prepare payload matching the backend's PaddleUpdatePayload struct
     const payload = {
         game_id: gameId, // The original ActionHash identifying the game
+        recipient: opponentKey ?? null,
         paddle_y: Math.round(isPlayer1 ? paddle1Y : paddle2Y) // Send the current Y position, rounded
     };
 
@@ -323,10 +366,11 @@
     // Prepare payload matching the backend's BallUpdatePayload struct
     const payload = {
         game_id: gameId, // The original ActionHash identifying the game
+        recipient: opponentKey ?? null,
         ball_x: Math.round(ball.x),
         ball_y: Math.round(ball.y),
-        ball_dx: Math.round(ball.dx), // Assuming backend expects i32
-        ball_dy: Math.round(ball.dy)  // Assuming backend expects i32
+        ball_dx: Math.round(ball.dx),
+        ball_dy: Math.round(ball.dy)
     };
 
     try {
@@ -346,9 +390,10 @@
         cap_secret: null,
         role_name : "ping_2_pong",
         zome_name : "ping_2_pong",
-        fn_name   : "send_score_update",            // <- backend helper you added earlier
+        fn_name   : "send_score_update",
         payload: {
           game_id: gameId,
+          recipient: opponentKey ?? null,
           score1 : score.player1,
           score2 : score.player2
         }
@@ -361,9 +406,13 @@
     if (!client) return;
 
     return client.on("signal", (raw: any) => {
-      const s = raw?.App?.payload;
+      let s = raw;
+      if (raw?.App?.payload) s = raw.App.payload;
+      else if (raw?.value?.payload) s = raw.value.payload;
+      else if (raw?.payload) s = raw.payload;
+
       if (!s || !s.type || gameOver) return;
-      if (encodeHashToBase64(s.game_id) !== encodeHashToBase64(gameId)) return;
+      if (s.game_id && encodeHashToBase64(s.game_id) !== encodeHashToBase64(gameId)) return;
 
       const meB64 = encodeHashToBase64(playerKey);
 
@@ -373,6 +422,17 @@
             if (encodeHashToBase64(s.player) !== meB64) {
               if (isPlayer1) paddle2Y = s.paddle_y;
               else           paddle1Y = s.paddle_y;
+            }
+            break;
+
+          case "PaddleHit":
+            if (encodeHashToBase64(s.player) !== meB64) {
+              const boost = Math.min(12, Math.abs(ball.dx) * 1.08);
+              ball.dx = isPlayer1 ? -boost : boost; // Deflect away from hitting player
+              ball.y = s.ball_y;
+              playPaddleHit();
+              shakeAmt = 8;
+              createExplosion(ball.x, ball.y, 8, false);
             }
             break;
 
@@ -399,8 +459,7 @@
               shakeAmt = 20;
               createExplosion(ball.x, ball.y, 25, true);
             }
-            score.player1 = s.score1;
-            score.player2 = s.score2;
+            score = { player1: s.score1, player2: s.score2 };
             break;
 
           case "GameOver":
@@ -429,11 +488,14 @@
       playWallBounce();
     }
 
-    // Check for collisions with paddles
+    // Check for collisions with paddles (with 18px latency compensation margin)
     let hitPaddle = false;
+    const HITBOX_GRACE = 18; // Compensate for P2P network latency
+
     // Player 1 paddle collision logic
-    if (ball.dx < 0 && ball.x - BALL_RADIUS < PADDLE_WIDTH && ball.x > BALL_RADIUS && ball.y > paddle1Y && ball.y < paddle1Y + PADDLE_HEIGHT) {
-        ball.dx = -ball.dx * 1.05; // Reverse horizontal velocity, increase speed
+    if (ball.dx < 0 && ball.x - BALL_RADIUS <= PADDLE_WIDTH + 8 && ball.x >= BALL_RADIUS - 10 && ball.y >= paddle1Y - HITBOX_GRACE && ball.y <= paddle1Y + PADDLE_HEIGHT + HITBOX_GRACE) {
+        const speedBoost = Math.min(12, Math.abs(ball.dx) * 1.08);
+        ball.dx = speedBoost; // Reverse horizontal velocity and accelerate
         ball.x = PADDLE_WIDTH + BALL_RADIUS; // Reposition ball
         ball.dy = (ball.y - (paddle1Y + PADDLE_HEIGHT / 2)) * 0.35; // Add vertical angle
         hitPaddle = true;
@@ -442,8 +504,9 @@
         createExplosion(ball.x, ball.y, 8, false);
     }
     // Player 2 paddle collision logic
-    else if (ball.dx > 0 && ball.x + BALL_RADIUS > CANVAS_WIDTH - PADDLE_WIDTH && ball.x < CANVAS_WIDTH - BALL_RADIUS && ball.y > paddle2Y && ball.y < paddle2Y + PADDLE_HEIGHT) {
-        ball.dx = -ball.dx * 1.05; // Reverse horizontal velocity, increase speed
+    else if (ball.dx > 0 && ball.x + BALL_RADIUS >= CANVAS_WIDTH - PADDLE_WIDTH - 8 && ball.x <= CANVAS_WIDTH - BALL_RADIUS + 10 && ball.y >= paddle2Y - HITBOX_GRACE && ball.y <= paddle2Y + PADDLE_HEIGHT + HITBOX_GRACE) {
+        const speedBoost = Math.min(12, Math.abs(ball.dx) * 1.08);
+        ball.dx = -speedBoost; // Reverse horizontal velocity and accelerate
         ball.x = CANVAS_WIDTH - PADDLE_WIDTH - BALL_RADIUS; // Reposition ball
         ball.dy = (ball.y - (paddle2Y + PADDLE_HEIGHT / 2)) * 0.35; // Add vertical angle
         hitPaddle = true;
@@ -455,9 +518,13 @@
     // Check if a player scored (ball went past a paddle)
     let scored = false;
     if (ball.x + BALL_RADIUS < 0) {          // P2 scores
-      score.player2++; scored = true; sendScoreUpdate();
+      score = { player1: score.player1, player2: score.player2 + 1 };
+      scored = true;
+      sendScoreUpdate();
     } else if (ball.x - BALL_RADIUS > CANVAS_WIDTH) { // P1 scores
-      score.player1++; scored = true; sendScoreUpdate();
+      score = { player1: score.player1 + 1, player2: score.player2 };
+      scored = true;
+      sendScoreUpdate();
     }
 
     // Handle the outcome of the physics update
@@ -474,11 +541,11 @@
         if(winner) console.log("Game Over! Winner:", truncatePubkey(winner));
         handleLocalGameOver(); // Trigger backend updates and game over signal
       } else {
-        // If game not over, reset ball for the next point
+        // If game not over, reset ball for the next point with gentle serve speed
         ball.x = CANVAS_WIDTH / 2;
         ball.y = CANVAS_HEIGHT / 2;
-        ball.dx = 5 * (score.player1 > score.player2 ? -1 : 1); // Serve towards the player who lost the point
-        ball.dy = 5 * (Math.random() > 0.5 ? 1 : -1); // Random vertical serve direction
+        ball.dx = 2.5 * (score.player1 > score.player2 ? -1 : 1); // Serve towards player who lost point
+        ball.dy = 2.0 * (Math.random() > 0.5 ? 1 : -1); // Gentle vertical serve direction
         lastBallUpdate = 0; // Reset throttle timer for immediate update
         sendBallUpdate(); // Send the reset ball state
       }
@@ -726,8 +793,9 @@
     }
 
     // --- Game Logic & Next Frame Scheduling ---
-    // Update ball physics and score (only Player 1)
+    // Update paddle movement continuously and ball physics (only Player 1)
     if (liveGame && liveGame.game_status === 'InProgress') { // Only run physics if game is InProgress
+        updatePaddleInput();
         if (isPlayer1) updateBallAndScore();
         ctx.restore();
         animationFrameId = requestAnimationFrame(draw); // Continue loop
@@ -766,6 +834,7 @@
     // Stop animation loop and remove listeners
     cancelAnimationFrame(animationFrameId);
     window.removeEventListener("keydown", handleKeyDown);
+    window.removeEventListener("keyup", handleKeyUp);
     if (unsubscribeFromSignals) unsubscribeFromSignals(); // Unsubscribe from Holochain signals
   });
 

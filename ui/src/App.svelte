@@ -12,7 +12,7 @@
   import { currentGame } from "./stores/currentGame";
   // Import invitation store and helpers
   import { invitations, addInvitation, removeInvitation } from "./stores/invitationStore";
-  import { getOrFetchProfile, type DisplayProfile } from "./stores/profilesStore";
+  import { getOrFetchProfile, cacheProfile, type DisplayProfile } from "./stores/profilesStore";
   // Import the specific signal type
   // MODIFIED: Added GlobalChatMessageSignal
   import type { GameInvitationSignal, GameStartedSignal, GlobalChatMessageSignal, GameAbandonedSignal } from "./ping_2_pong/ping_2_pong/types"; // Adjust path if necessary
@@ -85,141 +85,95 @@
   }
 
 
+  function unwrapSignal(raw: any): any {
+    if (!raw) return null;
+    let s = raw;
+    if (s?.App?.payload) s = s.App.payload;
+    if (s?.value?.payload) s = s.value.payload;
+    if (s?.payload) s = s.payload;
+    if (Array.isArray(s)) s = s[0];
+    return s;
+  }
+
   // --- Signal Handler ---
   function handleSignal(signalPayload: any) {
-      console.log("%%%% RAW SIGNAL RECEIVED BY CLIENT:", JSON.stringify(signalPayload, null, 2));
+      const s = unwrapSignal(signalPayload);
+      if (!s || !s.type) return;
 
-      let actualSignal = signalPayload;
-      if (signalPayload?.App?.payload) {
-          actualSignal = signalPayload.App.payload;
-      } else if (signalPayload?.value?.payload) {
-          actualSignal = signalPayload.value.payload;
-      } else if (signalPayload?.payload) {
-          actualSignal = signalPayload.payload;
-      }
+      if (s.type === "PresenceUpdate") {
+          if (s.agent_key && s.nickname) {
+              cacheProfile(s.agent_key, s.nickname);
+          }
+      } else if (s.type === "GameInvitation") {
+          const inviter = s.inviter || s.inviter_pub_key;
+          const gameId = s.game_id;
+          const message = s.message || "You have been invited to play Pong!";
+          if (gameId && inviter) {
+              if (encodeHashToBase64(inviter) !== encodeHashToBase64(client.myPubKey)) {
+                  addInvitation({ game_id: gameId, inviter, message, type: "GameInvitation" });
+              }
+          }
+      } else if (s.type === "GameStarted") {
+          const { game_id, player_1, player_2 } = s;
+          if (game_id && player_1 && player_2) {
+              const myPubKeyB64 = encodeHashToBase64(client.myPubKey);
+              const p1B64 = encodeHashToBase64(player_1);
+              const p2B64 = encodeHashToBase64(player_2);
+              if (myPubKeyB64 === p1B64 || myPubKeyB64 === p2B64) {
+                  currentGame.set(game_id);
+                  currentRoute.set("gameplay");
+                  invitations.set([]);
+              }
+          }
+      } else if (s.type === "GlobalChatMessage") {
+          const sender = s.sender;
+          const content = s.content;
+          const timestamp = s.timestamp;
 
-      if (!actualSignal?.type) {
-          return;
-      }
+          let senderB64 = "";
+          if (typeof sender === "string") {
+              senderB64 = sender;
+          } else if (sender) {
+              try { senderB64 = encodeHashToBase64(sender); } catch(e) { senderB64 = String(sender); }
+          }
 
-          // console.log(`[App.svelte handleSignal] Detected signal type: ${actualSignal.type}`); // Info
+          let messageTimestamp = Date.now();
+          if (typeof timestamp === "number") {
+              messageTimestamp = timestamp > 1e12 ? Math.floor(timestamp / 1000) : timestamp;
+          } else if (Array.isArray(timestamp) && timestamp.length >= 1) {
+              messageTimestamp = timestamp[0] * 1000 + Math.floor((timestamp[1] || 0) / 1000000);
+          }
 
-          // Handle GameInvitation signals
-          if (actualSignal.type === "GameInvitation") {
-              // console.log("[App.svelte handleSignal] Processing GameInvitation...");
-              const invitation = actualSignal as GameInvitationSignal;
-              if (invitation.game_id && invitation.inviter && invitation.message) {
-                  if (encodeHashToBase64(invitation.inviter) !== encodeHashToBase64(client.myPubKey)) {
-                      // console.log("[App.svelte handleSignal] Adding invitation to store:", invitation); // Info
-                      addInvitation(invitation);
-                      // console.log("[App.svelte handleSignal] Invitations store state:", get(invitations)); // Debug
+          if (content && typeof content === "string") {
+              addChatMessage({
+                  type: "GlobalChatMessage",
+                  sender: senderB64,
+                  content: content,
+                  timestamp: messageTimestamp,
+              });
+          }
+      } else if (s.type === "GameAbandoned") {
+          const { game_id: abandonedGameId, abandoned_by_player } = s;
+          const currentLocalGameId = get(currentGame);
+          if (currentLocalGameId && abandonedGameId && encodeHashToBase64(abandonedGameId) === encodeHashToBase64(currentLocalGameId)) {
+              getOrFetchProfile(client, abandoned_by_player).then(profile => {
+                  if (profile && profile.nickname) {
+                      opponentWhoLeftNickname = profile.nickname;
                   } else {
-                      // console.log("[App.svelte handleSignal] Ignoring self-sent GameInvitation signal."); // Info
+                      opponentWhoLeftNickname = truncatePubkey(abandoned_by_player);
                   }
-              } else {
-                  console.warn("[App.svelte handleSignal] Malformed GameInvitation signal received:", invitation);
-              }
-          // Handle GameStarted signals
-          } else if (actualSignal.type === "GameStarted") {
-              // console.log("[App.svelte handleSignal] Processing GameStarted...");
-              const { game_id, player_1, player_2 } = actualSignal as GameStartedSignal;
-
-              if (game_id && player_1 && player_2) {
-                   const myPubKeyB64 = encodeHashToBase64(client.myPubKey);
-                   const p1B64 = encodeHashToBase64(player_1);
-                   const p2B64 = encodeHashToBase64(player_2);
-
-                   // console.log(`[App.svelte handleSignal GameStarted] MyKey: ${myPubKeyB64}, P1: ${p1B64}, P2: ${p2B64}`); // Debug
-
-                   // Check if I am one of the players in the started game
-                   if (myPubKeyB64 === p1B64 || myPubKeyB64 === p2B64) {
-                       // console.log(`[App.svelte handleSignal GameStarted] Match found! I am involved.`);
-                       // console.log(`[App.svelte handleSignal GameStarted] Setting currentGame to: ${encodeHashToBase64(game_id)}`);
-                       currentGame.set(game_id);
-                       // console.log(`[App.svelte handleSignal GameStarted] Setting currentRoute to: gameplay`);
-                       currentRoute.set("gameplay");
-                       // console.log(`[App.svelte handleSignal GameStarted] Clearing invitations.`);
-                       invitations.set([]);
-                       // console.log(`[App.svelte handleSignal GameStarted] Navigation logic complete.`);
-                   } else {
-                       // console.log(`[App.svelte handleSignal GameStarted] Ignoring signal for game ${encodeHashToBase64(game_id)} as I am not a participant.`); // Info
-                   }
-              } else {
-                   console.warn("[App.svelte handleSignal GameStarted] Signal missing required fields (game_id, player_1, player_2)", actualSignal);
-              }
-          // Handle standard signals
-          } else if (actualSignal.type === "EntryCreated") {
-              // console.log("[App.svelte handleSignal] Received EntryCreated signal (standard)."); // Info
-          } else if (actualSignal.type === "LinkCreated") {
-              // console.log("[App.svelte handleSignal] Received LinkCreated signal (standard)."); // Info
+                  opponentWhoLeftAgentKeyB64 = encodeHashToBase64(abandoned_by_player);
+                  showOpponentLeftPopup = true;
+              }).catch(() => {
+                  opponentWhoLeftNickname = truncatePubkey(abandoned_by_player);
+                  opponentWhoLeftAgentKeyB64 = encodeHashToBase64(abandoned_by_player);
+                  showOpponentLeftPopup = true;
+              });
+              currentGame.set(null);
+              currentRoute.set("dashboard");
+              invitations.set([]);
           }
-          else if (actualSignal.type === "GlobalChatMessage") {
-            const rawSignal = actualSignal as any;
-            const chatPayload = rawSignal[0] || rawSignal.payload || rawSignal;
-            const sender = chatPayload.sender;
-            const content = chatPayload.content;
-            const timestamp = chatPayload.timestamp;
-
-            let senderB64 = "";
-            if (typeof sender === "string") {
-                senderB64 = sender;
-            } else if (sender) {
-                try { senderB64 = encodeHashToBase64(sender); } catch(e) { senderB64 = String(sender); }
-            }
-
-            let messageTimestamp = Date.now();
-            if (typeof timestamp === "number") {
-                messageTimestamp = timestamp > 1e12 ? Math.floor(timestamp / 1000) : timestamp;
-            } else if (Array.isArray(timestamp) && timestamp.length >= 1) {
-                messageTimestamp = timestamp[0] * 1000 + Math.floor((timestamp[1] || 0) / 1000000);
-            }
-
-            if (content && typeof content === "string") {
-                const chatSignal: GlobalChatMessageSignal = {
-                    type: "GlobalChatMessage",
-                    sender: senderB64,
-                    content: content,
-                    timestamp: messageTimestamp,
-                };
-                addChatMessage(chatSignal);
-            } else {
-                console.warn("[App.svelte handleSignal] Malformed GlobalChatMessage signal received:", rawSignal);
-            }
-          } else if (actualSignal.type === "GameAbandoned") {
-              console.log("[App.svelte handleSignal] Processing GameAbandoned signal:", actualSignal);
-              const { game_id: abandonedGameId, abandoned_by_player } = actualSignal as GameAbandonedSignal; // Cast to the new type
-
-              const currentLocalGameId = get(currentGame);
-              if (currentLocalGameId && abandonedGameId && encodeHashToBase64(abandonedGameId) === encodeHashToBase64(currentLocalGameId)) {
-                  console.log(`[App.svelte handleSignal] Current game ${encodeHashToBase64(currentLocalGameId)} was abandoned by ${encodeHashToBase64(abandoned_by_player)}. Showing popup.`);
-            
-                  // Fetch profile of the player who abandoned
-                  getOrFetchProfile(client, abandoned_by_player).then(profile => {
-                      if (profile && profile.nickname) {
-                          opponentWhoLeftNickname = profile.nickname;
-                      } else {
-                          opponentWhoLeftNickname = truncatePubkey(abandoned_by_player); // Fallback to truncated pubkey
-                      }
-                      opponentWhoLeftAgentKeyB64 = encodeHashToBase64(abandoned_by_player);
-                      showOpponentLeftPopup = true;
-                  }).catch(profileError => {
-                      console.error("[App.svelte handleSignal] Error fetching profile for opponent who left:", profileError);
-                      opponentWhoLeftNickname = truncatePubkey(abandoned_by_player); // Fallback
-                      opponentWhoLeftAgentKeyB64 = encodeHashToBase64(abandoned_by_player);
-                      showOpponentLeftPopup = true;
-                  });
-
-                  currentGame.set(null);
-                  currentRoute.set("dashboard");
-                  invitations.set([]); 
-              } else {
-                  // This log is important for debugging signals for other games or if self-abandonment signal is received
-                  console.log(`[App.svelte handleSignal] Received GameAbandoned signal for game ${abandonedGameId ? encodeHashToBase64(abandonedGameId) : 'unknown'}, but it does not match current game ${currentLocalGameId ? encodeHashToBase64(currentLocalGameId) : 'none'}. Or I was the one who abandoned (UI handles this separately).`);
-              }
-          }
-          else {
-              console.warn(`[App.svelte handleSignal] Received unhandled signal type in payload: ${actualSignal.type}`, actualSignal);
-          }
+      }
   }
 
 
@@ -269,33 +223,21 @@
   }
 
   function handleDeclineInvitation(gameIdToDecline: ActionHash) {
-      // console.log("[App.svelte handleDeclineInvitation] Declining invitation for game:", encodeHashToBase64(gameIdToDecline)); // Info
       removeInvitation(gameIdToDecline);
-      invitationError = null; // Clear error if an invitation is declined
+      invitationError = null;
   }
 
   // --- Exit Game Handler ---
   function exitGame() {
-      // console.log("[App.svelte exitGame] Exiting game..."); // Info
       currentGame.set(null);
       currentRoute.set("dashboard");
-      invitations.set([]); // Clear any pending invitations
-
-      // Add this block to refresh leaderboard
+      invitations.set([]);
       if (dashboardComponent && typeof dashboardComponent.refreshLeaderboardData === 'function') {
-        // Use setTimeout to allow Svelte to render/update the dashboard component first
         setTimeout(() => {
-          // Double check instance, as component might be destroyed if route change was too fast or something else happened
           if (dashboardComponent && typeof dashboardComponent.refreshLeaderboardData === 'function') {
-            console.log("[App.svelte] exitGame: Attempting to refresh leaderboard data via Dashboard component.");
             dashboardComponent.refreshLeaderboardData();
-          } else {
-            console.warn("[App.svelte] exitGame: Dashboard component or refreshLeaderboardData method not available after timeout.");
           }
         }, 0);
-      } else {
-        // This can happen if the Dashboard component wasn't rendered yet or `bind:this` hasn't updated `dashboardComponent`
-        console.warn("[App.svelte] exitGame: Dashboard component not immediately available for refresh request. This might be okay if the dashboard is about to be mounted.");
       }
   }
 
@@ -307,15 +249,12 @@
       client = await appClientContext.getClient();
       if (client) {
           unsubscribeFromSignals = client.on("signal", handleSignal);
-          // console.log("App.svelte signal listener attached."); // Info
-
-          // ---- ADD THIS LINE ----
           await checkAndLoadExistingProfile(client);
-          // ---- END ADDITION ----
+          await publishPresence();
       }
-      presenceIntervalId = setInterval(publishPresence, 30000);
+      presenceIntervalId = setInterval(publishPresence, 60000);
     } catch (e) { 
-      console.error("Failed to initialize Holochain client or load profile:", e); // Modified error message
+      console.error("Failed to initialize Holochain client or load profile:", e);
       error = e as HolochainError;
     }
     finally { 
@@ -334,23 +273,10 @@
 
   // Reactive derivations
   const isRegistered = derived(playerProfile, ($p) => $p !== null);
-  let route: string; currentRoute.subscribe((value) => { route = value || 'dashboard'; });
-  let gameId: ActionHash | null = null; currentGame.subscribe((value) => { gameId = value; });
-  let currentPlayerProfile: { nickname: string; agentKey: AgentPubKey } | null; playerProfile.subscribe((value) => { currentPlayerProfile = value; });
-
-  // Derive state for the current invitation popup
-  let currentInvitationToShow: GameInvitationSignal | null = null;
-  invitations.subscribe(invList => {
-      if (invList.length > 0) {
-        if (!currentInvitationToShow || encodeHashToBase64(currentInvitationToShow.game_id) !== encodeHashToBase64(invList[0].game_id)) {
-          invitationError = null; // Clear error when a new invitation appears
-        }
-        currentInvitationToShow = invList[0];
-      } else {
-        currentInvitationToShow = null;
-        invitationError = null; // Clear error if no invitations are present
-      }
-  });
+  $: route = $currentRoute || 'dashboard';
+  $: gameId = $currentGame;
+  $: currentPlayerProfile = $playerProfile;
+  $: currentInvitationToShow = $invitations.length > 0 ? $invitations[0] : null;
 
 </script>
 
@@ -386,10 +312,10 @@
     {#if route === "dashboard"}
       <Dashboard on:join-game={handleJoinGame} bind:this={dashboardComponent} />
     {:else if route === "gameplay"}
-       {#if currentPlayerProfile?.agentKey && gameId}
+       {#if currentPlayerProfile && gameId}
            <PongGame
              gameId={gameId}
-             playerKey={currentPlayerProfile.agentKey}
+             playerKey={client?.myPubKey || currentPlayerProfile.agentKeyB64}
              on:exit-game={exitGame}
            />
        {:else}

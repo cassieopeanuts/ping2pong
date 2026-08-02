@@ -171,13 +171,15 @@ pub fn join_game(original_game_hash: ActionHash) -> ExternResult<Record> {
     // 7. Broadcast locally (player 2) …
     emit_signal(&start_sig)?;
 
+    let start_sig_io = ExternIO::encode(&start_sig).map_err(|e| wasm_error!(WasmErrorInner::Guest(e.to_string())))?;
+
     // 8. Relay to player 1 – synchronous RPC
     call_remote(
         player1_pubkey.clone(),          // destination agent
         zome_info()?.name,               // current zome name
         "receive_remote_signal".into(),  // the helper you just added
         None,                            // provenance (cap secret)
-        &start_sig                       // same payload
+        start_sig_io                     // same payload
     )?;
 
     debug!("[join_game] Emitted GameStarted signal (broadcast): {:?}", start_sig);
@@ -457,50 +459,62 @@ pub fn delete_game(original_game_hash: ActionHash) -> ExternResult<ActionHash> {
 /// Creates a Presence entry and links it from the global "presence" anchor.
 #[hdk_extern]
 pub fn publish_presence(_: ()) -> ExternResult<ActionHash> {
-    let agent = agent_info()?.agent_initial_pubkey;
-    let now = sys_time()?.as_millis();
-    let timestamp_u64 = now.try_into().map_err(|e| wasm_error!(WasmErrorInner::Guest(format!("Timestamp conversion error: {}", e))))?;
-
-    let presence = Presence { agent_pubkey: agent, timestamp: timestamp_u64 };
-    let presence_action_hash = create_entry(&EntryTypes::Presence(presence))?;
     let presence_anchor_hash = anchor_for("presence")?;
-    create_link(presence_anchor_hash, presence_action_hash.clone(), LinkTypes::Presence, ())?;
-    Ok(presence_action_hash)
-}
+    let me = agent_info()?.agent_initial_pubkey;
 
-/// Retrieves a list of AgentPubKeys considered "online" based on recent Presence entries.
-#[hdk_extern]
-pub fn get_online_users(_: ()) -> ExternResult<Vec<AgentPubKey>> {
-    let presence_anchor_hash = anchor_for("presence")?;
-    let links = get_links(LinkQuery::try_new(presence_anchor_hash, LinkTypes::Presence)?, GetStrategy::default())?;
-    let mut online_agents: Vec<AgentPubKey> = Vec::new();
+    // Deduplicate: check if a presence link from this agent already exists within 5 mins
+    let existing_links = get_links(
+        LinkQuery::try_new(presence_anchor_hash.clone(), LinkTypes::Presence)?,
+        GetStrategy::default(),
+    )?;
+
     let now_ms = sys_time()?.as_millis();
-    let cutoff = now_ms.saturating_sub(60_000); // 60 second cutoff
-
-    let get_inputs: Vec<GetInput> = links
-        .into_iter()
-        .filter_map(|link| link.target.into_action_hash())
-        .map(|ah| GetInput::new(ah.into(), GetOptions::default()))
-        .collect();
-
-    if get_inputs.is_empty() {
-        return Ok(vec![]);
-    }
-
-    if let Ok(records) = HDK.with(|hdk| hdk.borrow().get(get_inputs)) {
-        for record in records.into_iter().flatten() {
-            if let Some(entry_data) = record.entry().as_option() {
-                if let Ok(presence) = Presence::try_from(entry_data.clone()) {
-                    let cutoff_u64 = u64::try_from(cutoff).unwrap_or(0);
-                    if presence.timestamp >= cutoff_u64 {
-                        if !online_agents.contains(&presence.agent_pubkey) {
-                            online_agents.push(presence.agent_pubkey);
-                        }
-                    }
-                }
+    for link in existing_links {
+        if link.author == me {
+            let link_ms = link.timestamp.as_millis();
+            if now_ms.saturating_sub(link_ms) < 300_000 { // 5 minutes cutoff
+                return Ok(link.create_link_hash);
             }
         }
     }
+
+    let presence_action_hash = create_link(
+        presence_anchor_hash,
+        me,
+        LinkTypes::Presence,
+        (),
+    )?;
+    Ok(presence_action_hash)
+}
+
+/// Retrieves a list of AgentPubKeys considered "online" based on Presence and Player links.
+#[hdk_extern]
+pub fn get_online_users(_: ()) -> ExternResult<Vec<AgentPubKey>> {
+    let presence_anchor_hash = anchor_for("presence")?;
+    let presence_links = get_links(LinkQuery::try_new(presence_anchor_hash, LinkTypes::Presence)?, GetStrategy::default())?;
+    
+    let all_players_path = Path::from("all_players");
+    let all_players_anchor_hash = all_players_path.path_entry_hash()?;
+    let player_links = get_links(LinkQuery::try_new(all_players_anchor_hash, LinkTypes::AllPlayersAnchorToAgentPubKey)?, GetStrategy::default())?;
+
+    let mut online_agents: Vec<AgentPubKey> = Vec::new();
+
+    // 1. Add authors of presence links
+    for link in presence_links {
+        if !online_agents.contains(&link.author) {
+            online_agents.push(link.author);
+        }
+    }
+
+    // 2. Add targets of all_players links
+    for link in player_links {
+        if let Some(agent_pk) = link.target.into_agent_pub_key() {
+            if !online_agents.contains(&agent_pk) {
+                online_agents.push(agent_pk);
+            }
+        }
+    }
+
     Ok(online_agents)
 }
 
@@ -608,7 +622,7 @@ pub fn abandon_game(original_game_hash: ActionHash) -> ExternResult<Record> {
 
     // Send signal to the other player
     // The original_game_hash is the game_id the signal function expects in its payload
-    match crate::signals::send_game_abandoned_signal(crate::signals::GameAbandonedPayload { game_id: original_game_hash.clone() }) {
+    match crate::signals::send_game_abandoned_signal(crate::signals::GameAbandonedPayload { game_id: original_game_hash.clone(), recipient: None }) {
         Ok(_) => debug!("[game.rs] abandon_game: GameAbandoned signal sent successfully for game: {:?}", original_game_hash),
         Err(e) => {
             // Log the error but don't fail the whole abandon_game operation,

@@ -18,6 +18,7 @@ pub struct AcceptInvitationPayload {
 /// Player-to-player invitation (P1 ➜ P2)
 #[hdk_extern]
 pub fn send_invitation(payload: InvitationPayload) -> ExternResult<()> {
+    let _ = crate::signals::grant_remote_signal_cap();
     // build the signal once
     let signal = Signal::GameInvitation {
         game_id: payload.game_id.clone(),
@@ -28,20 +29,29 @@ pub fn send_invitation(payload: InvitationPayload) -> ExternResult<()> {
     // 1) show it in *my* UI
     emit_signal(&signal)?;
 
-    // 2) call remote invitee
-    match call_remote(
-        payload.invitee.clone(),     // who to call
-        "ping_2_pong",               // zome
-        "receive_remote_signal".into(),
-        None,                        // unrestricted cap
-        signal,                      // payload
-    ) {
-        Ok(res) => {
-            info!("Successfully sent remote signal to {:?}: {:?}", payload.invitee, res);
-        }
-        Err(e) => {
-            warn!("Failed to send remote invitation to {:?}: {:?}", payload.invitee, e);
-            return Err(wasm_error!(format!("Failed to send remote invitation: {:?}", e)));
+    let signal_io = ExternIO::encode(&signal).map_err(|e| wasm_error!(WasmErrorInner::Guest(e.to_string())))?;
+
+    // 2) call remote invitee with retries
+    let mut attempt = 0;
+    while attempt < 3 {
+        match call_remote(
+            payload.invitee.clone(),     // who to call
+            "ping_2_pong",               // zome
+            "receive_remote_signal".into(),
+            None,                        // unrestricted cap
+            signal_io.clone(),           // payload
+        ) {
+            Ok(res) => {
+                info!("Successfully sent remote signal to {:?}: {:?}", payload.invitee, res);
+                break;
+            }
+            Err(e) => {
+                warn!("Attempt {} failed to send remote signal to {:?}: {:?}", attempt + 1, payload.invitee, e);
+                attempt += 1;
+                if attempt == 3 {
+                    return Err(wasm_error!(format!("Failed to send remote invitation after 3 attempts: {:?}", e)));
+                }
+            }
         }
     }
 

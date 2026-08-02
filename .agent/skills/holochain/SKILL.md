@@ -79,6 +79,12 @@ Scaffold:      hc scaffold entry-type MyEntry  |  hc scaffold link-type AgentToM
 
 Run this against any zome code being written or reviewed. Each item is a class of bug that has burned projects before.
 
+### Memory Leak & Svelte Reactive Loop Prevention (MANDATORY)
+- [ ] **NO store mutations inside `$:` reactive blocks** — Never invoke `.update()` or re-assign local state inside a Svelte `$:` block that reads that same store. This creates infinite loops (60,000+ exec/sec) and hits JavaScript V8 Heap Out Of Memory (OOM). Use derived stores (`derived()`), auto-subscriptions (`$store`), or pure helper functions instead.
+- [ ] **Clean up signal & event listeners** — Always store and invoke the unsubscribe handle returned by `client.on("signal", handler)` inside `onDestroy()`. Never register un-tracked signal listeners or window key/resize listeners on every render.
+- [ ] **Value-equality guards before store updates** — Before mutating a Map/Set store (e.g., `profilesCache`), verify if the existing key value is identical (`if (existing && existing.name === newName) return cache;`). Avoid re-creating Map references (`new Map()`) on identical data.
+- [ ] **Public `pub fn init` WASM Export** — In Rust coordinator zomes, `init()` MUST be `pub fn init(_: ()) -> ExternResult<InitCallbackResult>`. Private `fn init` is omitted from the WASM export table, breaking capability grants (`create_cap_grant`) and causing `Unauthorized` remote calls.
+
 ### Entry Schema Evolution
 - [ ] **`#[serde(default)]` on new optional fields** — Any field added to an existing entry struct after initial deployment MUST have `#[serde(default)]`. Without it, existing entries serialized before the field existed will fail to deserialize. `Option<T>` alone is NOT sufficient.
   ```rust
