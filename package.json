@@ -1,0 +1,34 @@
+{
+  "name": "ping2pong-dev",
+  "private": true,
+  "workspaces": [
+    "ui"
+  ],
+  "scripts": {
+    "start": "AGENTS=${AGENTS:-2} npm run network",
+    "network": "hc sandbox clean && npm run build:happ && UI_PORT=$(get-port) concurrently \"npm run start --workspace ui\" \"npm run launch:happ\" \"holochain-playground\"",
+    "test": "npm run build:happ",
+    "launch:happ": "hc-spin -n $AGENTS --ui-port $UI_PORT workdir/ping2pong.happ",
+    "start:tauri": "AGENTS=${AGENTS:-2} npm run network:tauri",
+    "network:tauri": "hc sandbox clean && npm run build:happ && UI_PORT=$(get-port) concurrently \"npm run start --workspace ui\" \"npm run launch:tauri\" \"holochain-playground\"",
+    "launch:tauri": "concurrently \"hc run-local-services\" \"echo pass | RUST_LOG=warn hc launch --piped -n $AGENTS workdir/ping2pong.happ --ui-port $UI_PORT\"",
+    "package": "npm run build:happ && npm run package --workspace ui && hc web-app pack workdir --recursive",
+    "build:happ": "npm run build:zomes && hc app pack workdir --recursive",
+    "build:zomes": "cargo build --release --target wasm32-unknown-unknown"
+  },
+  "devDependencies": {
+    "@holochain-playground/cli": "^0.300.1",
+    "@holochain/hc-spin": "^0.601.3",
+    "concurrently": "^6.5.1",
+    "get-port-cli": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  },
+  "hcScaffold": {
+    "template": "svelte"
+  },
+  "dependencies": {
+    "@msgpack/msgpack": "^3.1.1"
+  }
+}

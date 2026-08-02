@@ -1,0 +1,6 @@
+manifest_version: '1'
+name: ping2pong
+ui:
+  bundled: '../ui/dist.zip'
+happ_manifest:
+  bundled: './ping2pong.happ'
