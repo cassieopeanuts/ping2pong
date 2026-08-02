@@ -5,10 +5,10 @@
     "ui"
   ],
   "scripts": {
-    "start": "AGENTS=${AGENTS:-2} npm run network",
-    "network": "hc sandbox clean && npm run build:happ && UI_PORT=$(get-port) concurrently \"npm run start --workspace ui\" \"npm run launch:happ\" \"holochain-playground\"",
+    "start": "AGENTS=${AGENTS:-2} npm run package && hc-spin -n $AGENTS workdir/ping2pong.webhapp",
+    "network": "npm run start",
     "test": "npm run build:happ",
-    "launch:happ": "hc-spin -n $AGENTS --ui-port $UI_PORT workdir/ping2pong.happ",
+    "launch:happ": "hc-spin -n $AGENTS workdir/ping2pong.webhapp",
     "start:tauri": "AGENTS=${AGENTS:-2} npm run network:tauri",
     "network:tauri": "hc sandbox clean && npm run build:happ && UI_PORT=$(get-port) concurrently \"npm run start --workspace ui\" \"npm run launch:tauri\" \"holochain-playground\"",
     "launch:tauri": "concurrently \"hc run-local-services\" \"echo pass | RUST_LOG=warn hc launch --piped -n $AGENTS workdir/ping2pong.happ --ui-port $UI_PORT\"",
