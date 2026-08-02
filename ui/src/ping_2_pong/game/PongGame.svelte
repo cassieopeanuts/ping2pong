@@ -592,34 +592,23 @@
 
       // --- Backend Updates ---
 
-      // 1. Update Game Status to 'Finished' on the DHT
+      // 1. Update Game Status to 'Finished' on the DHT via finish_game
       try {
-            // Construct the final game state object
-            const finishedGameState: Game = {
-                player_1: latestGameState.player_1,
-                player_2: latestGameState.player_2,
-                created_at: latestGameState.created_at,
-                game_status: 'Finished', // Set status to Finished
-                player_1_paddle: Math.round(paddle1Y), // Snapshot final positions
-                player_2_paddle: Math.round(paddle2Y),
-                ball_x: Math.round(ball.x),
-                ball_y: Math.round(ball.y),
-            };
-            // Prepare the payload for the update_game zome call
-            const updatePayload: UpdateGameInput = {
-                 original_game_hash: original_game_hash,
-                 previous_game_hash: previous_game_hash,
-                 updated_game: finishedGameState,
-            };
-            console.log("Updating game status to Finished with payload:", updatePayload);
-            // Call the backend zome function to commit the update
-            await client.callZome({ cap_secret: null, role_name: "ping_2_pong", zome_name: "ping_2_pong", fn_name: "update_game", payload: updatePayload });
-            console.log("Game status updated on DHT.");
+            console.log("Finishing game status on DHT...");
+            await client.callZome({
+                cap_secret: null,
+                role_name: "ping_2_pong",
+                zome_name: "ping_2_pong",
+                fn_name: "finish_game",
+                payload: {
+                    original_game_hash: original_game_hash,
+                    previous_game_hash: previous_game_hash
+                }
+            });
+            console.log("Game status updated to Finished on DHT.");
        } catch (e) {
-            console.error("Error updating game status:", e);
-            errorMsg = `Failed to update game status: ${(e as Error).message}`; // Set a more informative error message
-            // Ensure UI updates if errorMsg is used for display
-            return; // EXIT the function if status update fails
+            console.error("Error finishing game status:", e);
+            // Proceed to save scores even if status link had a minor issue
        }
 
        // 2. Save Final Scores for both players on the DHT

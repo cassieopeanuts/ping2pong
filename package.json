@@ -5,7 +5,7 @@
     "ui"
   ],
   "scripts": {
-    "start": "npm run package && killall holochain lair-keystore 2>/dev/null || true; rm -rf .hc /tmp/hc-spin* 2>/dev/null; hc-spin -n 2 workdir/ping2pong.webhapp",
+    "start": "npm run package && killall holochain lair-keystore 2>/dev/null || true; rm -rf .hc /tmp/hc-spin* 2>/dev/null; hc-spin -n 2 --network-seed ping2pong_dev workdir/ping2pong.webhapp",
     "network": "npm run start",
     "test": "npm run build:happ",
     "launch:happ": "rm -rf /tmp/hc* /tmp/ks* /tmp/[A-Za-z0-9]* .hc 2>/dev/null; hc-spin -n 2 --network-seed ping2pong_v1 workdir/ping2pong.webhapp",

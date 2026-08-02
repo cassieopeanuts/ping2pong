@@ -362,6 +362,43 @@ pub fn get_all_revisions_for_game(original_game_hash: ActionHash) -> ExternResul
     Ok(revision_records)
 }
 
+/// Input structure for the `finish_game` function.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct FinishGameInput {
+    pub original_game_hash: ActionHash,
+    pub previous_game_hash: ActionHash,
+}
+
+/// Marks a game as Finished on chain reliably without needing complex client-side Game struct serialization.
+#[hdk_extern]
+pub fn finish_game(input: FinishGameInput) -> ExternResult<Record> {
+    debug!("[game.rs] finish_game: Called with input: {:?}", input);
+    let details = get_details(input.previous_game_hash.clone(), GetOptions::default())?.ok_or(
+        wasm_error!(WasmErrorInner::Guest("Game record not found".to_string())),
+    )?;
+    let record = match details {
+        Details::Record(details) => details.record,
+        _ => return Err(wasm_error!(WasmErrorInner::Guest("Expected Record for game details".to_string()))),
+    };
+    let entry = record.entry().as_option().ok_or(wasm_error!(WasmErrorInner::Guest("Game record has no entry".to_string())))?.clone();
+    let mut game = <Game>::try_from(entry)?;
+    game.game_status = GameStatus::Finished;
+
+    let updated_action_hash = update_entry(input.previous_game_hash.clone(), &game)?;
+    create_link(
+        input.original_game_hash.clone(),
+        updated_action_hash.clone(),
+        LinkTypes::GameUpdates,
+        (),
+    )?;
+
+    let updated_record = get(updated_action_hash, GetOptions::default())?.ok_or(wasm_error!(
+        WasmErrorInner::Guest("Could not find the updated Game record".to_string())
+    ))?;
+    debug!("[game.rs] finish_game: Successfully marked game as Finished.");
+    Ok(updated_record)
+}
+
 /// Input structure for the `update_game` function.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct UpdateGameInput {
