@@ -55,7 +55,13 @@
       if (!client) {
         // console.log("Connecting to Holochain...");
         try {
-          client = await AppWebsocket.connect({ url: new URL("ws://localhost:8888") });
+          const urlParams = new URLSearchParams(window.location.search);
+          const appPort = urlParams.get("app_port") || urlParams.get("port") || (window as any).__HC_PORT__;
+          if (appPort) {
+            client = await AppWebsocket.connect({ url: new URL(`ws://localhost:${appPort}`) });
+          } else {
+            client = await AppWebsocket.connect();
+          }
           // console.log("Holochain client connected.");
         } catch (e) { console.error("AppWebsocket.connect error:", e); error = e as HolochainError; throw e; }
       }

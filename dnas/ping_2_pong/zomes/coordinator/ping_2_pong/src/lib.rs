@@ -14,6 +14,7 @@ pub use chat::send_global_chat_message;
 pub use signals::receive_remote_signal;
 
 use hdk::prelude::*;
+
 // Use integrity crate types (EntryTypes, LinkTypes)
 use ping_2_pong_integrity::*;
 

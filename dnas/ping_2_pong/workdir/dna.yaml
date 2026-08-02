@@ -1,7 +1,6 @@
-manifest_version: '1'
+manifest_version: '0'
 name: ping_2_pong
 integrity:
-  origin_time: 1738223185381309
   zomes:
   - name: ping_2_pong_integrity
     path: '../../../target/wasm32-unknown-unknown/release/ping_2_pong_integrity.wasm'

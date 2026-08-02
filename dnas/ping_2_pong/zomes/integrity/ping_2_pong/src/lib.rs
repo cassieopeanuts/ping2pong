@@ -1,5 +1,12 @@
-// ping_2_pong/dnas/ping_2_pong/zomes/integrity/ping_2_pong/src/lib.rs
 use hdk::prelude::*;
+
+fn custom_getrandom(buf: &mut [u8]) -> Result<(), getrandom::Error> {
+    for byte in buf.iter_mut() {
+        *byte = 0;
+    }
+    Ok(())
+}
+getrandom::register_custom_getrandom!(custom_getrandom);
 
 // Import entry definitions
 pub mod game;

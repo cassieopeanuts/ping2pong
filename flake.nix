@@ -1,11 +1,6 @@
 {
   description = "Flake for Holochain app development";
 
-  nixConfig = {
-    extra-substituters = "https://holochain-ci.cachix.org";
-    extra-trusted-public-keys = "holochain-ci.cachix.org-1:5hF5NxLXeaDh17B4655f9G072S2C76v0y757PX6l4Wc=";
-  };
-
   inputs = {
     holonix.url = "github:holochain/holonix?ref=main-0.6";
 
