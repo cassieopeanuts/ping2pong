@@ -21,9 +21,6 @@
   function getSenderNickname(senderB64: string): string {
     const cached = $profilesCache.get(senderB64);
     if (cached && cached.nickname) return cached.nickname;
-    if (client) {
-      getOrFetchProfile(client, senderB64);
-    }
     return truncatePubkey(senderB64, 4, 4);
   }
 
@@ -80,17 +77,18 @@
     }
   }
 
-  onMount(async () => { // Made onMount async
-    client = await appClientContext.getClient(); // Initialize client
+  onMount(async () => {
+    client = await appClientContext.getClient();
 
-    // Scroll to bottom when component mounts and when messages change
     unsubscribeFromStore = globalChatMessages.subscribe((messages) => {
-      if (messages.length > 0) { // Only scroll if there are messages
+      if (messages.length > 0) {
         scrollToBottom();
+        const lastMsg = messages[messages.length - 1];
+        if (lastMsg && lastMsg.sender && client) {
+          getOrFetchProfile(client, lastMsg.sender);
+        }
       }
     });
-    // Initial scroll attempt, useful if messages are already loaded
-    // Ensure chatBox is rendered before scrolling
     setTimeout(scrollToBottom, 50);
   });
 
