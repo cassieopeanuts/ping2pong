@@ -88,18 +88,19 @@
   // --- Signal Handler ---
   function handleSignal(signalPayload: any) {
       console.log("%%%% RAW SIGNAL RECEIVED BY CLIENT:", JSON.stringify(signalPayload, null, 2));
-      // console.log("[App.svelte handleSignal] Received signal RAW:", JSON.stringify(signalPayload, null, 2)); // Too verbose
 
-      if (signalPayload && typeof signalPayload === 'object' && signalPayload.App) {
-          const appSignalWrapper = signalPayload.App;
-          // console.log("[App.svelte handleSignal] Processing App signal wrapper:", appSignalWrapper); // Verbose
+      let actualSignal = signalPayload;
+      if (signalPayload?.App?.payload) {
+          actualSignal = signalPayload.App.payload;
+      } else if (signalPayload?.value?.payload) {
+          actualSignal = signalPayload.value.payload;
+      } else if (signalPayload?.payload) {
+          actualSignal = signalPayload.payload;
+      }
 
-          const actualSignal = appSignalWrapper.payload;
-
-          if (!actualSignal?.type) {
-              // console.log("[App.svelte handleSignal] App signal payload ignored (missing type).", actualSignal); // Can be noisy
-              return;
-          }
+      if (!actualSignal?.type) {
+          return;
+      }
 
           // console.log(`[App.svelte handleSignal] Detected signal type: ${actualSignal.type}`); // Info
 
@@ -228,9 +229,6 @@
           else {
               console.warn(`[App.svelte handleSignal] Received unhandled signal type in payload: ${actualSignal.type}`, actualSignal);
           }
-      } else {
-          // console.log("[App.svelte handleSignal] Received signal ignored (not App signal structure):", signalPayload); // Can be noisy
-      }
   }
 
 

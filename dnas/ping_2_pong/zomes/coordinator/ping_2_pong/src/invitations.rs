@@ -28,14 +28,22 @@ pub fn send_invitation(payload: InvitationPayload) -> ExternResult<()> {
     // 1) show it in *my* UI
     emit_signal(&signal)?;
 
-    // 2) fire-and-forget to the invitee
-    let _ = call_remote(
-        payload.invitee,             // who to call
+    // 2) call remote invitee
+    match call_remote(
+        payload.invitee.clone(),     // who to call
         "ping_2_pong",               // zome
         "receive_remote_signal".into(),
         None,                        // unrestricted cap
-        signal,                      // payload (cloned implicitly)
-    );
+        signal,                      // payload
+    ) {
+        Ok(res) => {
+            info!("Successfully sent remote signal to {:?}: {:?}", payload.invitee, res);
+        }
+        Err(e) => {
+            warn!("Failed to send remote invitation to {:?}: {:?}", payload.invitee, e);
+            return Err(wasm_error!(format!("Failed to send remote invitation: {:?}", e)));
+        }
+    }
 
     Ok(())
 }
