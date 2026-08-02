@@ -1,5 +1,5 @@
 use hdk::prelude::*;
-use crate::{Signal, ChatMessagePayload};
+use crate::Signal;
 
 #[hdk_extern]
 pub fn send_global_chat_message(content: String) -> ExternResult<()> {
@@ -7,13 +7,11 @@ pub fn send_global_chat_message(content: String) -> ExternResult<()> {
     let my_pub_key = my_agent_info.agent_initial_pubkey.clone();
     let now_timestamp = sys_time()?;
 
-    let payload = ChatMessagePayload {
+    let signal = Signal::GlobalChatMessage {
         timestamp: now_timestamp,
         sender: my_pub_key.clone(),
         content,
     };
-
-    let signal = Signal::GlobalChatMessage(payload);
 
     // 1. Emit locally for sender's UI
     emit_signal(&signal)?;

@@ -153,46 +153,37 @@
           } else if (actualSignal.type === "LinkCreated") {
               // console.log("[App.svelte handleSignal] Received LinkCreated signal (standard)."); // Info
           }
-          // MODIFIED: Added GlobalChatMessage handler
           else if (actualSignal.type === "GlobalChatMessage") {
-            // console.log("[App.svelte handleSignal] Processing GlobalChatMessage..."); // Kept for specific debugging if needed
-            const rawSignal = actualSignal as any; // Keep 'as any' for flexibility
+            const rawSignal = actualSignal as any;
+            const chatPayload = rawSignal[0] || rawSignal.payload || rawSignal;
+            const sender = chatPayload.sender;
+            const content = chatPayload.content;
+            const timestamp = chatPayload.timestamp;
 
-            // Check for the numeric timestamp first, as this is what's being observed
-            if (rawSignal.sender && typeof rawSignal.content === 'string' && typeof rawSignal.timestamp === 'number') {
+            let senderB64 = "";
+            if (typeof sender === "string") {
+                senderB64 = sender;
+            } else if (sender) {
+                try { senderB64 = encodeHashToBase64(sender); } catch(e) { senderB64 = String(sender); }
+            }
 
-                const messageTimestamp = Math.floor(rawSignal.timestamp / 1000); // Assuming microseconds -> milliseconds
-                const senderB64 = encodeHashToBase64(rawSignal.sender); // Encode sender
+            let messageTimestamp = Date.now();
+            if (typeof timestamp === "number") {
+                messageTimestamp = timestamp > 1e12 ? Math.floor(timestamp / 1000) : timestamp;
+            } else if (Array.isArray(timestamp) && timestamp.length >= 1) {
+                messageTimestamp = timestamp[0] * 1000 + Math.floor((timestamp[1] || 0) / 1000000);
+            }
 
+            if (content && typeof content === "string") {
                 const chatSignal: GlobalChatMessageSignal = {
                     type: "GlobalChatMessage",
-                    sender: senderB64,    // Use encoded sender
-                    content: rawSignal.content,
-                    timestamp: messageTimestamp, // Converted to milliseconds
-                };
-                addChatMessage(chatSignal);
-                // console.log("[App.svelte handleSignal] Added chat message to store (numeric timestamp, encoded sender):", chatSignal); // Info
-
-            // Fallback for original [seconds, nanoseconds] array format (optional, but good for robustness)
-            } else if (rawSignal.sender && typeof rawSignal.content === 'string' &&
-                Array.isArray(rawSignal.timestamp) && rawSignal.timestamp.length === 2 &&
-                typeof rawSignal.timestamp[0] === 'number' && typeof rawSignal.timestamp[1] === 'number') {
-                
-                const messageTimestamp = rawSignal.timestamp[0] * 1000 + Math.floor(rawSignal.timestamp[1] / 1000000);
-                const senderB64 = encodeHashToBase64(rawSignal.sender); // Encode sender
-                
-                const chatSignal: GlobalChatMessageSignal = {
-                    type: "GlobalChatMessage",
-                    sender: senderB64, // Use encoded sender
-                    content: rawSignal.content,
+                    sender: senderB64,
+                    content: content,
                     timestamp: messageTimestamp,
                 };
                 addChatMessage(chatSignal);
-                // console.log("[App.svelte handleSignal] Added chat message to store (array timestamp, encoded sender):", chatSignal); // Info
-            }
-            else {
-                // If neither matches, then it's malformed
-                console.warn("[App.svelte handleSignal] Malformed GlobalChatMessage signal received or sender/timestamp issue (unhandled format):", rawSignal);
+            } else {
+                console.warn("[App.svelte handleSignal] Malformed GlobalChatMessage signal received:", rawSignal);
             }
           } else if (actualSignal.type === "GameAbandoned") {
               console.log("[App.svelte handleSignal] Processing GameAbandoned signal:", actualSignal);

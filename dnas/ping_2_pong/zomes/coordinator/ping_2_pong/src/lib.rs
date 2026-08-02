@@ -49,7 +49,11 @@ fn init(_: ()) -> ExternResult<InitCallbackResult> {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
 pub enum Signal {
-    GlobalChatMessage(ChatMessagePayload),
+    GlobalChatMessage {
+        timestamp: Timestamp,
+        sender: AgentPubKey,
+        content: String,
+    },
     // Standard Holochain signals
     LinkCreated { action: SignedActionHashed, link_type: LinkTypes },
     LinkDeleted { action: SignedActionHashed, create_link_action: SignedActionHashed, link_type: LinkTypes },
