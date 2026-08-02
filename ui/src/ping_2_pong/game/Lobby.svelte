@@ -106,44 +106,37 @@
           fn_name: "get_online_users", payload: null
         });
 
-      // Create initial user list with pubKey and loading status for nickname/status
-      const newOnlineUsers: OnlineUser[] = fetchedPubKeys.map(pubKey => ({
-        pubKey,
-        status: 'Loading',
-        pubKeyB64: encodeHashToBase64(pubKey) // Store B64 version
-      }));
-      onlineUsers = newOnlineUsers;
+      const userPromises = fetchedPubKeys.map(async (pubKey) => {
+        const pubKeyB64 = encodeHashToBase64(pubKey);
+        let nickname: string | undefined = undefined;
+        let status: PlayerStatus | 'Loading' | 'Error' = 'Loading';
 
-      // Fetch profiles and statuses for each user
-      for (let i = 0; i < onlineUsers.length; i++) {
-        const user = onlineUsers[i];
+        try {
+          const profile = await getOrFetchProfile(client, pubKey);
+          if (profile) nickname = profile.nickname;
+        } catch (e) {}
 
-        // Fetch profile (nickname)
-        getOrFetchProfile(client, user.pubKey).then(profile => {
-          if (profile) {
-            onlineUsers[i] = { ...onlineUsers[i], nickname: profile.nickname };
-            onlineUsers = [...onlineUsers]; // Trigger reactivity
+        try {
+          const statusResult = await client.callZome({
+            cap_secret: null,
+            role_name: HOLOCHAIN_ROLE_NAME,
+            zome_name: HOLOCHAIN_ZOME_NAME,
+            fn_name: "get_player_status",
+            payload: pubKey,
+          });
+          if (typeof statusResult === "string") {
+            status = statusResult as PlayerStatus;
+          } else {
+            status = "Error";
           }
-        });
+        } catch (e) {
+          status = "Error";
+        }
 
-        // Fetch status
-        client.callZome({
-            cap_secret: null, role_name: HOLOCHAIN_ROLE_NAME, zome_name: HOLOCHAIN_ZOME_NAME,
-            fn_name: "get_player_status", payload: user.pubKey
-        }).then(statusResult => {
-            if (typeof statusResult === 'string') {
-                onlineUsers[i] = { ...onlineUsers[i], status: statusResult as PlayerStatus };
-            } else {
-                 console.warn("Unexpected status result format:", statusResult);
-                 onlineUsers[i] = { ...onlineUsers[i], status: 'Error' };
-            }
-            onlineUsers = [...onlineUsers]; // Trigger reactivity
-        }).catch(statusError => {
-            console.error(`Error fetching status for ${truncatePubkey(user.pubKeyB64)}:`, statusError); // Use B64 for logging
-            onlineUsers[i] = { ...onlineUsers[i], status: 'Error' };
-            onlineUsers = [...onlineUsers]; // Trigger reactivity
-        });
-      }
+        return { pubKey, pubKeyB64, nickname, status };
+      });
+
+      onlineUsers = await Promise.all(userPromises);
       // Initial render might show loading, then updates as promises resolve
       // No need for final onlineUsers = [...onlineUsers] here as it's done within loops
 
