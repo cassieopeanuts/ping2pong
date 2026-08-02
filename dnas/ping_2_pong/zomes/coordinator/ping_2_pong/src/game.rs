@@ -481,43 +481,52 @@ pub fn publish_presence(_: ()) -> ExternResult<ActionHash> {
     Ok(presence_action_hash)
 }
 
+/// Helper to resolve the latest updated Record for an action hash
+fn latest_presence_record(original: &ActionHash) -> ExternResult<Record> {
+    let mut current = original.clone();
+    loop {
+        let Some(details) = get_details(current.clone(), GetOptions::default())? else {
+            return get(current, GetOptions::default())?.ok_or(wasm_error!("Record not found"));
+        };
+        match details {
+            Details::Record(rec) => {
+                if let Some(update) = rec.updates.last() {
+                    current = update.action_address().clone();
+                } else {
+                    return Ok(rec.record);
+                }
+            }
+            _ => return get(current, GetOptions::default())?.ok_or(wasm_error!("Record not found")),
+        }
+    }
+}
+
 /// Retrieves a list of AgentPubKeys considered "online" based on recent Presence entries.
 #[hdk_extern]
 pub fn get_online_users(_: ()) -> ExternResult<Vec<AgentPubKey>> {
-     let presence_anchor_hash = anchor_for("presence")?;
-    // Get links from the presence anchor
-    let links = get_links( LinkQuery::try_new(presence_anchor_hash, LinkTypes::Presence)?, GetStrategy::default() )?;
+    let presence_anchor_hash = anchor_for("presence")?;
+    let links = get_links(LinkQuery::try_new(presence_anchor_hash, LinkTypes::Presence)?, GetStrategy::default())?;
     let mut online_agents: Vec<AgentPubKey> = Vec::new();
     let now_ms = sys_time()?.as_millis();
-    let cutoff = now_ms.saturating_sub(30_000); // 30 second cutoff
+    let cutoff = now_ms.saturating_sub(60_000); // 60 second cutoff
 
-    // Prepare batch get for presence entries
-    let get_inputs: Vec<GetInput> = links .into_iter() .filter_map(|link| link.target.into_action_hash()) .map(|ah| GetInput::new(ah.into(), GetOptions::default())) .collect();
-     if get_inputs.is_empty() { return Ok(vec![]); }
+    let action_hashes: Vec<ActionHash> = links
+        .into_iter()
+        .filter_map(|link| link.target.into_action_hash())
+        .collect();
 
-    // Fetch presence records
-    let records_result = HDK.with(|hdk| hdk.borrow().get(get_inputs));
-    let records = match records_result {
-      Ok(records) => records,
-      Err(e) => return Err(wasm_error!(WasmErrorInner::Guest(format!("Failed to get presence records: {:?}", e))))
-    };
-
-    // Process records to find recent ones
-    for record_option in records {
-        if let Some(record) = record_option {
-             if let Some(entry_data) = record.entry().as_option() {
-                 // Try to deserialize as Presence entry
-                 if let Ok(presence) = Presence::try_from(entry_data.clone()) {
-                     // Convert cutoff safely for comparison
-                     let cutoff_u64 = u64::try_from(cutoff).unwrap_or(0);
-                     // Check if timestamp is recent and agent not already added
-                     if presence.timestamp >= cutoff_u64 {
-                         if !online_agents.contains(&presence.agent_pubkey) {
-                             online_agents.push(presence.agent_pubkey);
-                         }
-                     }
-                 } else { warn!("Failed to deserialize Presence entry for record: {:?}", record.action_hashed().hash); }
-             } else { warn!("Presence record has no entry data: {:?}", record.action_hashed().hash); }
+    for ah in action_hashes {
+        if let Ok(record) = latest_presence_record(&ah) {
+            if let Some(entry_data) = record.entry().as_option() {
+                if let Ok(presence) = Presence::try_from(entry_data.clone()) {
+                    let cutoff_u64 = u64::try_from(cutoff).unwrap_or(0);
+                    if presence.timestamp >= cutoff_u64 {
+                        if !online_agents.contains(&presence.agent_pubkey) {
+                            online_agents.push(presence.agent_pubkey);
+                        }
+                    }
+                }
+            }
         }
     }
     Ok(online_agents)
