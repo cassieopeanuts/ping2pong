@@ -19,7 +19,8 @@ pub fn grant_remote_signal_cap() -> ExternResult<()> {
 
 /// ──────────────────────── local re-emit ───────────────────────
 #[hdk_extern]
-pub fn receive_remote_signal(signal: Signal) -> ExternResult<()> {
+pub fn receive_remote_signal(input: ExternIO) -> ExternResult<()> {
+    let signal: Signal = input.decode().map_err(|e| wasm_error!(WasmErrorInner::Guest(format!("Failed to decode remote signal: {:?}", e))))?;
     emit_signal(&signal)
 }
 
