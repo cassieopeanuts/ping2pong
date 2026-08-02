@@ -5,14 +5,14 @@
     "ui"
   ],
   "scripts": {
-    "start": "npm run package && killall holochain lair-keystore 2>/dev/null || true; rm -rf .hc /tmp/hc-spin* 2>/dev/null; hc-spin -n 2 --network-seed ping2pong_dev workdir/ping2pong.webhapp",
+    "start": "export NODE_OPTIONS='--max-old-space-size=4096'; npm run package && killall holochain lair-keystore 2>/dev/null || true; rm -rf .hc /tmp/hc-spin* 2>/dev/null; hc-spin -n 2 --network-seed ping2pong_dev workdir/ping2pong.webhapp",
     "network": "npm run start",
     "test": "npm run build:happ",
     "launch:happ": "rm -rf /tmp/hc* /tmp/ks* /tmp/[A-Za-z0-9]* .hc 2>/dev/null; hc-spin -n 2 --network-seed ping2pong_v1 workdir/ping2pong.webhapp",
     "start:tauri": "AGENTS=${AGENTS:-2} npm run network:tauri",
     "network:tauri": "hc sandbox clean && npm run build:happ && UI_PORT=$(get-port) concurrently \"npm run start --workspace ui\" \"npm run launch:tauri\" \"holochain-playground\"",
     "launch:tauri": "concurrently \"hc run-local-services\" \"echo pass | RUST_LOG=warn hc launch --piped -n $AGENTS workdir/ping2pong.happ --ui-port $UI_PORT\"",
-    "package": "npm run build:happ && npm run package --workspace ui && hc web-app pack workdir --recursive",
+    "package": "export NODE_OPTIONS='--max-old-space-size=4096'; npm run build:happ && npm run package --workspace ui && hc web-app pack workdir --recursive",
     "build:happ": "npm run build:zomes && hc app pack workdir --recursive",
     "build:zomes": "cargo build --release --target wasm32-unknown-unknown"
   },

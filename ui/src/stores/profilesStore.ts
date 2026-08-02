@@ -12,14 +12,14 @@ export interface DisplayProfile {
 }
 
 export const profilesCache = writable<Map<AgentPubKeyB64, DisplayProfile>>(new Map());
-const fetchingStatus = writable<Map<AgentPubKeyB64, boolean>>(new Map()); // To prevent concurrent fetches
+const fetchingSet = new Set<AgentPubKeyB64>();
 
 export function cacheProfile(agentKeyToCache: AgentPubKey | AgentPubKeyB64, nickname: string) {
   const agentKeyB64 = typeof agentKeyToCache === 'string' ? agentKeyToCache : encodeHashToBase64(agentKeyToCache);
   if (!agentKeyB64 || !nickname) return;
   profilesCache.update(cache => {
     const existing = cache.get(agentKeyB64);
-    if (existing && existing.nickname === nickname) return cache; // Skip redundant updates
+    if (existing && existing.nickname === nickname) return cache;
     const newCache = new Map(cache);
     newCache.set(agentKeyB64, { nickname, agentKeyB64 });
     return newCache;
@@ -35,16 +35,11 @@ export async function getOrFetchProfile(client: AppClient, agentKeyToFetch: Agen
     return currentCache.get(agentKeyB64)!;
   }
 
-  const isFetching = getStoreValue(fetchingStatus).get(agentKeyB64);
-  if (isFetching) {
+  if (fetchingSet.has(agentKeyB64)) {
     return null;
   }
 
-  fetchingStatus.update(s => {
-    const newStatus = new Map(s);
-    newStatus.set(agentKeyB64, true);
-    return newStatus;
-  });
+  fetchingSet.add(agentKeyB64);
 
   try {
     const record: Record | null = await client.callZome({
@@ -71,26 +66,14 @@ export async function getOrFetchProfile(client: AppClient, agentKeyToFetch: Agen
         newCache.set(agentKeyB64, displayProfile);
         return newCache;
       });
-      fetchingStatus.update(s => {
-        const newStatus = new Map(s);
-        newStatus.set(agentKeyB64, false);
-        return newStatus;
-      });
+      fetchingSet.delete(agentKeyB64);
       return displayProfile;
     } else {
-      fetchingStatus.update(s => {
-        const newStatus = new Map(s);
-        newStatus.set(agentKeyB64, false);
-        return newStatus;
-      });
+      fetchingSet.delete(agentKeyB64);
       return null;
     }
   } catch (e) {
-    fetchingStatus.update(s => {
-      const newStatus = new Map(s);
-      newStatus.set(agentKeyB64, false);
-      return newStatus;
-    });
+    fetchingSet.delete(agentKeyB64);
     return null;
   }
 }

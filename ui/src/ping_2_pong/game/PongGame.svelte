@@ -370,7 +370,9 @@
         ball_x: Math.round(ball.x),
         ball_y: Math.round(ball.y),
         ball_dx: Math.round(ball.dx),
-        ball_dy: Math.round(ball.dy)
+        ball_dy: Math.round(ball.dy),
+        score1: score.player1,
+        score2: score.player2
     };
 
     try {
@@ -442,6 +444,9 @@
               const oldDy = ball.dy;
               ball.x = s.ball_x; ball.y = s.ball_y;
               ball.dx = s.ball_dx; ball.dy = s.ball_dy;
+              if (s.score1 !== undefined && s.score1 !== null && s.score2 !== undefined && s.score2 !== null) {
+                score = { player1: s.score1, player2: s.score2 };
+              }
               
               if (Math.sign(oldDx) !== Math.sign(ball.dx) && oldDx !== 0) {
                 playPaddleHit();

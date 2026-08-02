@@ -84,6 +84,8 @@ pub enum Signal {
         ball_y: i32,
         ball_dx: i32,
         ball_dy: i32,
+        score1: Option<u32>,
+        score2: Option<u32>,
     },
     ScoreUpdate {
         game_id: ActionHash,

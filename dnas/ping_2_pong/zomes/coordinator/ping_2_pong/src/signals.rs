@@ -44,6 +44,8 @@ pub struct BallUpdatePayload {
     pub ball_y:    i32,
     pub ball_dx:   i32,
     pub ball_dy:   i32,
+    pub score1:    Option<u32>,
+    pub score2:    Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -180,6 +182,8 @@ pub fn send_ball_update(payload: BallUpdatePayload) -> ExternResult<()> {
         ball_y:  payload.ball_y,
         ball_dx: payload.ball_dx,
         ball_dy: payload.ball_dy,
+        score1:  payload.score1,
+        score2:  payload.score2,
     };
     emit_signal(&signal)?;
     broadcast_signal(payload.recipient, &payload.game_id, &signal)
