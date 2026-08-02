@@ -627,10 +627,9 @@ pub fn abandon_game(original_game_hash: ActionHash) -> ExternResult<Record> {
     };
 
     // 2. Validate if abandoning is allowed
-    if current_game.game_status != GameStatus::InProgress { // GameStatus from ping_2_pong_integrity::game
-        return Err(wasm_error!(WasmErrorInner::Guest(format!(
-            "Cannot abandon game: Game status is not 'InProgress', it's {:?}", current_game.game_status
-        ))));
+    if current_game.game_status == GameStatus::Finished || current_game.game_status == GameStatus::Abandoned {
+        debug!("[game.rs] abandon_game: Game is already {:?}, returning current record.", current_game.game_status);
+        return Ok(latest_game_record);
     }
 
     // Ensure the caller is one of the players in the game
