@@ -324,14 +324,13 @@ fn validate_player_to_scores_link(create_link: &CreateLink) -> ExternResult<Vali
 }
 
 fn validate_presence_link(create_link: &CreateLink) -> ExternResult<ValidateCallbackResult> {
-    // Base Check: Must be AnyLinkableHash (EntryHash)
-    if create_link.base_address.clone().into_entry_hash().is_none() {
-         return Ok(ValidateCallbackResult::Invalid("Base for Presence link must be 'presence' anchor hash".into()));
+    // Base Check: Must be AnyLinkableHash (EntryHash or AgentPubKey)
+    if create_link.base_address.clone().into_entry_hash().is_none() && create_link.base_address.clone().into_agent_pub_key().is_none() {
+         return Ok(ValidateCallbackResult::Invalid("Base for Presence link must be an EntryHash or AgentPubKey".into()));
     }
     // Target Check: Must be ActionHash
     if create_link.target_address.clone().into_action_hash().is_none() {
         return Ok(ValidateCallbackResult::Invalid("Presence link target must be an ActionHash".into()));
     }
-    // Note: Cannot validate author without get call to retrieve Presence entry's agent_pubkey
     Ok(ValidateCallbackResult::Valid)
 }

@@ -461,44 +461,11 @@ pub fn publish_presence(_: ()) -> ExternResult<ActionHash> {
     let now = sys_time()?.as_millis();
     let timestamp_u64 = now.try_into().map_err(|e| wasm_error!(WasmErrorInner::Guest(format!("Timestamp conversion error: {}", e))))?;
 
-    let presence = Presence { agent_pubkey: agent.clone(), timestamp: timestamp_u64 };
-
-    // Check if agent already has a presence entry
-    let existing_links = get_links(LinkQuery::try_new(agent.clone(), LinkTypes::Presence)?, GetStrategy::default())?;
-
-    if let Some(link) = existing_links.first() {
-        if let Some(action_hash) = link.target.clone().into_action_hash() {
-            if let Ok(updated_hash) = update_entry(action_hash, &presence) {
-                return Ok(updated_hash);
-            }
-        }
-    }
-
+    let presence = Presence { agent_pubkey: agent, timestamp: timestamp_u64 };
     let presence_action_hash = create_entry(&EntryTypes::Presence(presence))?;
     let presence_anchor_hash = anchor_for("presence")?;
     create_link(presence_anchor_hash, presence_action_hash.clone(), LinkTypes::Presence, ())?;
-    create_link(agent, presence_action_hash.clone(), LinkTypes::Presence, ())?;
     Ok(presence_action_hash)
-}
-
-/// Helper to resolve the latest updated Record for an action hash
-fn latest_presence_record(original: &ActionHash) -> ExternResult<Record> {
-    let mut current = original.clone();
-    loop {
-        let Some(details) = get_details(current.clone(), GetOptions::default())? else {
-            return get(current, GetOptions::default())?.ok_or(wasm_error!("Record not found"));
-        };
-        match details {
-            Details::Record(rec) => {
-                if let Some(update) = rec.updates.last() {
-                    current = update.action_address().clone();
-                } else {
-                    return Ok(rec.record);
-                }
-            }
-            _ => return get(current, GetOptions::default())?.ok_or(wasm_error!("Record not found")),
-        }
-    }
 }
 
 /// Retrieves a list of AgentPubKeys considered "online" based on recent Presence entries.
@@ -510,13 +477,18 @@ pub fn get_online_users(_: ()) -> ExternResult<Vec<AgentPubKey>> {
     let now_ms = sys_time()?.as_millis();
     let cutoff = now_ms.saturating_sub(60_000); // 60 second cutoff
 
-    let action_hashes: Vec<ActionHash> = links
+    let get_inputs: Vec<GetInput> = links
         .into_iter()
         .filter_map(|link| link.target.into_action_hash())
+        .map(|ah| GetInput::new(ah.into(), GetOptions::default()))
         .collect();
 
-    for ah in action_hashes {
-        if let Ok(record) = latest_presence_record(&ah) {
+    if get_inputs.is_empty() {
+        return Ok(vec![]);
+    }
+
+    if let Ok(records) = HDK.with(|hdk| hdk.borrow().get(get_inputs)) {
+        for record in records.into_iter().flatten() {
             if let Some(entry_data) = record.entry().as_option() {
                 if let Ok(presence) = Presence::try_from(entry_data.clone()) {
                     let cutoff_u64 = u64::try_from(cutoff).unwrap_or(0);
