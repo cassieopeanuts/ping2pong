@@ -322,7 +322,7 @@
           await checkAndLoadExistingProfile(client);
           // ---- END ADDITION ----
       }
-      presenceIntervalId = setInterval(publishPresence, 15000);
+      presenceIntervalId = setInterval(publishPresence, 30000);
     } catch (e) { 
       console.error("Failed to initialize Holochain client or load profile:", e); // Modified error message
       error = e as HolochainError;

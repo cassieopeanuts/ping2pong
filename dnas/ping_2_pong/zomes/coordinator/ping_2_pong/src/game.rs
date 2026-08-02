@@ -459,15 +459,25 @@ pub fn delete_game(original_game_hash: ActionHash) -> ExternResult<ActionHash> {
 pub fn publish_presence(_: ()) -> ExternResult<ActionHash> {
     let agent = agent_info()?.agent_initial_pubkey;
     let now = sys_time()?.as_millis();
-    // Convert timestamp safely
-    let timestamp_u64 = now.try_into().map_err(|e| wasm_error!(WasmErrorInner::Guest(format!("Timestamp conversion error (i64 to u64): {}", e))))?;
+    let timestamp_u64 = now.try_into().map_err(|e| wasm_error!(WasmErrorInner::Guest(format!("Timestamp conversion error: {}", e))))?;
 
-    let presence = Presence { agent_pubkey: agent, timestamp: timestamp_u64 };
-    // Create the entry
-    let presence_action_hash = create_entry(&EntryTypes::Presence(presence.clone()))?;
-    // Link from anchor
+    let presence = Presence { agent_pubkey: agent.clone(), timestamp: timestamp_u64 };
+
+    // Check if agent already has a presence entry
+    let existing_links = get_links(LinkQuery::try_new(agent.clone(), LinkTypes::Presence)?, GetStrategy::default())?;
+
+    if let Some(link) = existing_links.first() {
+        if let Some(action_hash) = link.target.clone().into_action_hash() {
+            if let Ok(updated_hash) = update_entry(action_hash, &presence) {
+                return Ok(updated_hash);
+            }
+        }
+    }
+
+    let presence_action_hash = create_entry(&EntryTypes::Presence(presence))?;
     let presence_anchor_hash = anchor_for("presence")?;
-    create_link( presence_anchor_hash, presence_action_hash.clone(), LinkTypes::Presence, (), )?;
+    create_link(presence_anchor_hash, presence_action_hash.clone(), LinkTypes::Presence, ())?;
+    create_link(agent, presence_action_hash.clone(), LinkTypes::Presence, ())?;
     Ok(presence_action_hash)
 }
 
