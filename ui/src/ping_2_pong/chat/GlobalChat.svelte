@@ -77,8 +77,11 @@
     }
   }
 
+  let isDestroyed = false;
+
   onMount(async () => {
     client = await appClientContext.getClient();
+    if (isDestroyed) return;
 
     unsubscribeFromStore = globalChatMessages.subscribe((messages) => {
       if (messages.length > 0) {
@@ -93,6 +96,7 @@
   });
 
   onDestroy(() => {
+    isDestroyed = true;
     if (unsubscribeFromStore) {
       unsubscribeFromStore();
     }

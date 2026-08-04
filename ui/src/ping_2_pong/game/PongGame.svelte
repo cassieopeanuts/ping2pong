@@ -100,6 +100,7 @@
   let retryCount = 0;
   const MAX_RETRIES = 5; // e.g., try 5 times
   const RETRY_DELAY = 1000; // 1 second delay
+  let isDestroyed = false;
 
   // --- Helper Functions ---
 
@@ -193,6 +194,7 @@
       errorMsg = null; // Clear previous errors
 
       const fetchedGame = await fetchGameState();
+      if (isDestroyed) return;
 
       if (fetchedGame) {
           // --- Game Ready ---
@@ -807,6 +809,7 @@
   // --- Component Lifecycle ---
   onMount(async () => {
     client = await appClientContext.getClient(); // Initialize Holochain client
+    if (isDestroyed) return;
     if (canvas) {
         ctx = canvas.getContext("2d")!;
     } else {
@@ -821,6 +824,7 @@
   });
 
   onDestroy(() => {
+    isDestroyed = true;
     // Cleanup logic when the component is removed from the DOM
     console.log("PongGame component destroyed. Cleaning up...");
     // Clear any pending retry timeouts

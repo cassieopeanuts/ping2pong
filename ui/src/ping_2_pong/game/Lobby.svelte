@@ -156,14 +156,18 @@
 
   // --- Lifecycle ---
   let onlineInterval: ReturnType<typeof setInterval>;
+  let isDestroyed = false;
 
   onMount(async () => {
     client = await appClientContext.getClient();
+    if (isDestroyed) return;
     await fetchOnlineUsersAndStatus(); // Initial fetch
+    if (isDestroyed) return;
     onlineInterval = setInterval(fetchOnlineUsersAndStatus, 11000); // Fetch status periodically
   });
 
   onDestroy(() => {
+    isDestroyed = true;
     clearInterval(onlineInterval); // Clear interval on component destroy
   });
 
