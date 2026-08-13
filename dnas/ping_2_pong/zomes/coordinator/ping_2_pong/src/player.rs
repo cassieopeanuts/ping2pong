@@ -188,7 +188,9 @@ pub fn get_deleted_player_links_for_agent( player_agent_key: AgentPubKey, ) -> E
 #[hdk_extern]
 pub fn get_player_by_name(player_name: String) -> ExternResult<Option<Record>> {
     let name_anchor = anchor_for(&player_name.to_lowercase())?;
-    let links = get_links( LinkQuery::try_new(name_anchor, LinkTypes::PlayerNameToPlayer)?, GetStrategy::default() )?;
+    let mut links = get_links( LinkQuery::try_new(name_anchor, LinkTypes::PlayerNameToPlayer)?, GetStrategy::default() )?;
+    // Deterministic resolution: sort by timestamp ascending so the earliest registration wins during offline conflict healing
+    links.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
     if let Some(link) = links.into_iter().next() {
         if let Some(action_hash) = link.target.into_action_hash() {
             get_original_player(action_hash)
