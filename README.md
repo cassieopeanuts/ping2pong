@@ -171,11 +171,19 @@ ping2pong/
 
 ---
 
-## 🔒 Security & Data Integrity
+## 🔒 Security, Data Integrity & Edge Cases
 
 - **Cryptographic Signatures**: Every action on Holochain is cryptographically signed by the agent's private key (`SignedActionHashed`). Impersonation is mathematically impossible.
 - **Deterministic Name Anchors**: Nicknames are tied to deterministic DHT anchor hashes (`Path::from("nickname").path_entry_hash()`). Duplicate name registrations are blocked at the zome level.
 - **Validation Rules**: `score_validation.rs` verifies that scores can only be recorded for games that exist on the DHT and that the scorer was a verified participant.
+
+### 🌐 Edge Case: Offline Name Collisions & Network Partition Resolution
+**Scenario**: What happens if Player 1 (Alice) registers `"cass1"` online, then all peers go offline, and Player 2 (Bob) joins locally in isolation and attempts to claim `"cass1"`?
+
+1. **Offline Registration**: While Bob is disconnected from holding peers, his local `get_links` query on the `"cass1"` anchor returns empty. Bob creates link $L_{Bob}$ pointing to his profile on his local chain.
+2. **Network Healing & Gossip**: When peers reconnect, Holochain's **Kitsune2 DHT gossip** synchronizes all ops for the `"cass1"` anchor. Because Holochain `CreateLink` ops are **append-only**, both $L_{Alice}$ and $L_{Bob}$ will now exist concurrently on the anchor.
+3. **Timestamp Determinism**: When resolving ownership, queries inspect signed action timestamps ($Timestamp(ActionHash)$). The link with the **earliest timestamp** ($L_{Alice}$) is deterministically recognized as the original owner.
+4. **Forging Protection**: Conductors cannot backdate action timestamps without invalidating cryptographic signatures and failing validation by peer nodes. When Bob's app detects an earlier link $L_{Alice}$ on the anchor, Bob's client alerts him to pick a new handle.
 
 ---
 
