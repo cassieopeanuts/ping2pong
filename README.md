@@ -45,26 +45,80 @@ Immutable score creation validated by integrity zomes and aggregated on the P2P 
 
 ---
 
-## 🚀 Quick Start (Development)
+## 🚀 Quick Start (Development & Testing)
 
-### Prerequisites
+### 1. Prerequisites & Environment Setup
 
-Ensure you have the [Holochain Development Environment](https://developer.holochain.org/docs/install/) installed.
+#### Native Linux / macOS
+Ensure you have Nix installed with Flakes enabled:
+```bash
+# Install Nix (Multi-user recommended)
+curl -L https://nixos.org/nix/install | sh
 
-### Enter Nix Environment & Install Dependencies
+# Enable Flakes in ~/.config/nix/nix.conf
+experimental-features = nix-command flakes
+```
+
+#### Windows via WSL2 (Windows Subsystem for Linux)
+For Windows developers, we recommend using **WSL2 (Ubuntu 22.04 / 24.04)**:
+
+1. **Install WSL2 & Ubuntu**:
+   ```powershell
+   wsl --install -d Ubuntu
+   ```
+2. **Enable Systemd in WSL2**:
+   Edit `/etc/wsl.conf` inside your WSL terminal:
+   ```ini
+   [boot]
+   systemd=true
+   ```
+   Then restart WSL from Windows PowerShell: `wsl --shutdown`.
+3. **Install Nix inside WSL2**:
+   ```bash
+   curl -L https://nixos.org/nix/install | sh --daemon
+   ```
+4. **IMPORTANT - Use Native Linux Filesystem**:
+   Clone and build the repository inside your Linux home directory (e.g. `/home/username/code/ping2pong`). **Do not** run from `/mnt/c/`, as Windows filesystem mounting degrades Rust compile speeds and file watcher events.
+5. **GUI Display (WSLg)**:
+   Windows 11 supports WSLg out of the box. `hc-spin` will open the UI electron/browser windows directly on your Windows desktop!
+
+---
+
+### 2. Enter Nix Environment & Install Dependencies
+
+Enter the isolated Holochain 0.7 development shell. This automatically provisions the exact versions of Rust, `wasm32-unknown-unknown` target, `holochain` binary (`0.4`), `hc` CLI, `hc-spin`, and Node.js:
 
 ```bash
+# Clone the repository
+git clone https://github.com/cassieopeanuts/ping2pong.git
+cd ping2pong
+
+# Enter the Holochain Nix development shell
 nix develop
+
+# Install Node.js workspace dependencies
 npm install
 ```
 
-### Launch 2-Agent Multi-Window Sandbox
+---
 
+### 3. Launching Multi-Agent Sandbox Sessions
+
+#### Launch Default 2-Agent Multi-Window Sandbox
 ```bash
 npm run start
 ```
+This command:
+1. Compiles the WASM Integrity and Coordinator zomes (`npm run build:zomes`).
+2. Bundles the UI and packages `workdir/ping2pong.webhapp`.
+3. Spins up **2 separate Holochain conductors** (`hc-spin`) in temporary sandboxes.
+4. Opens two independent UI client windows side-by-side so you can register two players (`Player 1` and `Player 2`), send invitations, chat, and test gameplay in real-time.
 
-This compiles the WASM zomes, packages the `.webhapp` application, and launches 2 connected Holochain conductors (`hc-spin`) with independent UI client windows.
+#### Test with 3+ Agents
+Want to test global chat or multi-user lobbies with 3 or 4 players?
+```bash
+AGENTS=3 npm run start
+```
 
 ---
 
@@ -78,6 +132,50 @@ npm run package
 
 The resulting package will be generated at:
 - `workdir/ping2pong.webhapp`
+
+---
+
+## 🛠️ Developer & Contributor Guide
+
+### Workspace Structure
+
+```
+ping2pong/
+├── dnas/
+│   └── ping_2_pong/
+│       └── zomes/
+│           ├── integrity/ping_2_pong/   # WASM Integrity Zome (Entry types & DHT validation)
+│           └── coordinator/ping_2_pong/ # WASM Coordinator Zome (Signals, presence, chat, score logic)
+├── ui/                                   # Svelte + Vite + HTML5 Canvas Frontend
+│   ├── src/
+│   │   ├── ping_2_pong/
+│   │   │   ├── game/                   # PongGame.svelte, Leaderboard.svelte, Lobby.svelte
+│   │   │   └── chat/                   # GlobalChat.svelte
+│   │   └── stores/                     # Svelte reactive stores (profiles, chat, game state)
+│   └── public/
+├── workdir/                              # Holochain app bundles (.happ, .dna, .webhapp)
+├── flake.nix                             # Holochain 0.7 Nix Flake development shell definition
+└── README.md
+```
+
+### Helpful Development Commands
+
+| Command | Action |
+| :--- | :--- |
+| `nix develop` | Enters the reproducible Holochain 0.7 shell environment |
+| `npm run start` | Builds zomes, packages `.webhapp`, and spins 2 sandboxed agents |
+| `AGENTS=3 npm run start` | Spins 3 connected sandboxed agents for multi-user lobby testing |
+| `npm run build:zomes` | Compiles Rust zomes to `wasm32-unknown-unknown` without launching UI |
+| `npm run package` | Builds release zomes and packages `workdir/ping2pong.webhapp` |
+| `npm run dev --workspace ui` | Runs UI Vite dev server only with hot module reloading (HMR) |
+
+---
+
+## 🔒 Security & Data Integrity
+
+- **Cryptographic Signatures**: Every action on Holochain is cryptographically signed by the agent's private key (`SignedActionHashed`). Impersonation is mathematically impossible.
+- **Deterministic Name Anchors**: Nicknames are tied to deterministic DHT anchor hashes (`Path::from("nickname").path_entry_hash()`). Duplicate name registrations are blocked at the zome level.
+- **Validation Rules**: `score_validation.rs` verifies that scores can only be recorded for games that exist on the DHT and that the scorer was a verified participant.
 
 ---
 
