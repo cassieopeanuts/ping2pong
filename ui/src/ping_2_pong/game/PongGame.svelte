@@ -32,7 +32,7 @@
   const BALL_RADIUS = 10;
   const WINNING_SCORE = 10;
   const PADDLE_SPEED = 25;
-  const UPDATE_INTERVAL = 50; // ms interval for sending signal updates
+  const UPDATE_INTERVAL = 20; // ms interval for sending signal updates (50 updates/sec)
 
   // Component State
   let gameRecord: Record | undefined; // Stores the latest fetched Holochain record for the game
@@ -188,11 +188,13 @@
 
   // Initializes the game, retrying fetchGameState if needed
   async function initializeGame() {
+      if (!isMounted) return;
       console.log(`[PongGame initializeGame] Starting initialization. Retry count: ${retryCount}`);
       loadingMsg = `Initializing game... (Attempt ${retryCount + 1})`;
       errorMsg = null; // Clear previous errors
 
       const fetchedGame = await fetchGameState();
+      if (!isMounted) return;
 
       if (fetchedGame) {
           // --- Game Ready ---
@@ -265,6 +267,7 @@
 
   // Starts the main game loop and sets up listeners
   function startGameLoop() {
+      if (!isMounted) return;
       if (!ctx) {
           console.error("[PongGame startGameLoop] Canvas context not available!");
           errorMsg = "Canvas failed to initialize.";
@@ -303,6 +306,9 @@
     activeKeys.delete(e.code);
   }
 
+  let lastSentPaddleY: number | null = null;
+
+  // Updates paddle position based on keyboard input
   function updatePaddleInput() {
     if (gameOver || !liveGame) return;
 
@@ -327,23 +333,34 @@
         moved = true;
       }
     }
-    if (moved) sendPaddleUpdate();
+
+    const currentY = Math.round(isPlayer1 ? paddle1Y : paddle2Y);
+    if (moved) {
+      sendPaddleUpdate();
+    } else if (lastSentPaddleY !== null && lastSentPaddleY !== currentY) {
+      sendPaddleUpdate(true);
+    }
   }
 
   $: opponentKey = isPlayer1 ? liveGame?.player_2 : liveGame?.player_1;
 
   // Sends the current player's paddle position update signal
-  async function sendPaddleUpdate() {
-    // Throttle updates
+  async function sendPaddleUpdate(force = false) {
     const now = Date.now();
-    if (gameOver || !client || !liveGame || !gameId || (now - lastPaddleUpdate < UPDATE_INTERVAL)) return;
-    lastPaddleUpdate = now; // Update timestamp
+    const currentY = Math.round(isPlayer1 ? paddle1Y : paddle2Y);
+
+    if (gameOver || !client || !liveGame || !gameId || !opponentKey) return;
+    if (!force && lastSentPaddleY === currentY) return;
+    if (!force && (now - lastPaddleUpdate < UPDATE_INTERVAL)) return;
+
+    lastPaddleUpdate = now;
+    lastSentPaddleY = currentY;
 
     // Prepare payload matching the backend's PaddleUpdatePayload struct
     const payload = {
         game_id: gameId, // The original ActionHash identifying the game
         recipient: opponentKey ?? null,
-        paddle_y: Math.round(isPlayer1 ? paddle1Y : paddle2Y) // Send the current Y position, rounded
+        paddle_y: currentY
     };
 
     try {
@@ -360,7 +377,7 @@
   async function sendBallUpdate() {
     // Throttle updates and ensure only Player 1 sends these signals
     const now = Date.now();
-    if (gameOver || !isPlayer1 || !client || !liveGame || !gameId || (now - lastBallUpdate < UPDATE_INTERVAL)) return;
+    if (gameOver || !isPlayer1 || !client || !liveGame || !gameId || !opponentKey || (now - lastBallUpdate < UPDATE_INTERVAL)) return;
     lastBallUpdate = now; // Update timestamp
 
     // Prepare payload matching the backend's BallUpdatePayload struct
@@ -405,9 +422,10 @@
 
   // Sets up the listener for incoming signals related to this specific game
   function subscribeToGameSignals() {
-    if (!client) return;
+    if (!isMounted || !client) return;
 
     return client.on("signal", (raw: any) => {
+      if (!isMounted) return;
       let s = raw;
       if (raw?.App?.payload) s = raw.App.payload;
       else if (raw?.value?.payload) s = raw.value.payload;
@@ -469,6 +487,9 @@
 
           case "GameOver":
             playGameOver();
+            if (s.score1 !== undefined && s.score1 !== null && s.score2 !== undefined && s.score2 !== null) {
+              score = { player1: s.score1, player2: s.score2 };
+            }
             handleRemoteGameOver(
               s.winner ?? null as AgentPubKey|null
             );
@@ -643,6 +664,7 @@
            // Prepare payload matching backend's GameOverPayload
            const gameOverPayload = {
                 game_id: original_game_hash, // Use original hash
+                recipient: opponentKey ?? null,
                 winner: winner, // AgentPubKey | null
                 score1: score.player1,
                 score2: score.player2
@@ -701,6 +723,7 @@
 
   // Main canvas drawing loop, responsible for rendering the game state
   function draw() {
+    if (!isMounted) return;
     // Ensure canvas context is ready
     if (!ctx) {
         // If context not ready, request next frame and exit
@@ -804,16 +827,20 @@
     }
   }
 
+  let isMounted = true;
+
   // --- Component Lifecycle ---
   onMount(async () => {
-    client = await appClientContext.getClient(); // Initialize Holochain client
+    const fetchedClient = await appClientContext.getClient(); // Initialize Holochain client
+    if (!isMounted) return;
+    client = fetchedClient;
     if (canvas) {
         ctx = canvas.getContext("2d")!;
     } else {
         console.error("Canvas element not found on mount.");
         errorMsg = "Failed to initialize canvas.";
         // Attempt to draw error even without game loop starting
-        if(ctx) draw();
+        if(ctx && isMounted) draw();
         return; // Stop initialization if canvas fails
     }
     // Start the initialization process (which includes retries)
@@ -821,6 +848,7 @@
   });
 
   onDestroy(() => {
+    isMounted = false;
     // Cleanup logic when the component is removed from the DOM
     console.log("PongGame component destroyed. Cleaning up...");
     // Clear any pending retry timeouts
@@ -858,9 +886,9 @@
 </div>
 
 <style>
-  .game-container { display: flex; justify-content: center; align-items: center; flex-direction: column; padding-top: 20px; }
+  .game-container { display: flex; justify-content: center; align-items: center; flex-direction: column; padding-top: 20px; width: 100%; box-sizing: border-box; }
   .error-message { color: red; margin-bottom: 10px; font-weight: bold; }
-  .game-window { position: relative; /* For positioning buttons */ }
+  .game-window { position: relative; width: 100%; max-width: 800px; margin: 0 auto; box-sizing: border-box; }
   .players-info {
     position: absolute;
     top: -25px; /* Position above the canvas */
@@ -883,6 +911,11 @@
     margin: 0 auto; /* Center canvas */
     border: 3px solid black; /* Border around the game area */
     box-shadow: none;
+    width: 100%;
+    max-width: 800px;
+    height: auto;
+    aspect-ratio: 4 / 3;
+    box-sizing: border-box;
   }
   .exit-game-button {
     position: absolute;

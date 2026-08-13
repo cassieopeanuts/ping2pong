@@ -1,5 +1,5 @@
 // ping_2_pong/dnas/ping_2_pong/zomes/integrity/ping_2_pong/src/score_validation.rs
-use hdk::prelude::*;
+use hdi::prelude::*;
 // Remove Game/GameStatus imports as they are no longer checked here
 // use crate::{score::Score, game::{Game, GameStatus}};
 use crate::score::Score; // Keep Score import
@@ -8,7 +8,7 @@ use std::ops::{Add, Sub};
 
 // Validate creation of a Score entry.
 pub fn validate_create_score(
-    action: &SignedActionHashed,
+    action: &TypedAction<CreateData>,
     score: Score,
 ) -> ExternResult<ValidateCallbackResult> {
     // 1. REMOVED: Check Game Existence and Status.
@@ -38,15 +38,14 @@ pub fn validate_create_score(
 
     // 4. Check Score Sanity: Points within reasonable limits.
     //    Keep this check as it only concerns the Score entry itself.
-    if score.player_points > 100 {
-         warn!("Recorded score {} seems high.", score.player_points);
-         // Optionally return Invalid if a hard limit is desired in integrity:
+     if score.player_points > 100 {
+         // Recorded score seems high, allow
+     }    // Optionally return Invalid if a hard limit is desired in integrity:
          // return Ok(ValidateCallbackResult::Invalid("Score points seem unreasonably high (> 100)".to_string()));
-    }
-
+    
     // 5. Check Timestamp plausibility
     //    Keep this check - compares action timestamp with entry timestamp.
-     let action_time = action.action().timestamp();
+     let action_time = action.timestamp();
      let five_minutes_duration = core::time::Duration::from_secs(300); // Using core::time::Duration
 
      let lower_bound = action_time.sub(five_minutes_duration)

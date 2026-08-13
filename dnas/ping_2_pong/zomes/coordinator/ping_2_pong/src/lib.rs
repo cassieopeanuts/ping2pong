@@ -117,17 +117,17 @@ pub fn post_commit(committed_actions: Vec<SignedActionHashed>) {
 // signal_action helper (no changes needed here)
 fn signal_action(action: SignedActionHashed) -> ExternResult<()> {
      // ... (keep existing implementation) ...
-     match action.action().clone() {
-        Action::CreateLink(create_link) => {
+     match &action.action().data {
+        ActionData::CreateLink(create_link) => {
             if let Ok(Some(link_type)) = LinkTypes::from_type(create_link.zome_index, create_link.link_type) {
                 emit_signal(Signal::LinkCreated { action, link_type })?;
             }
             Ok(())
         }
-        Action::DeleteLink(delete_link) => {
+        ActionData::DeleteLink(delete_link) => {
             match get(delete_link.link_add_address.clone(), GetOptions::default())? {
                 Some(record) => {
-                    if let Action::CreateLink(create_link) = record.action().clone() {
+                    if let ActionData::CreateLink(create_link) = &record.action().data {
                         if let Ok(Some(link_type)) = LinkTypes::from_type(create_link.zome_index, create_link.link_type) {
                             emit_signal(Signal::LinkDeleted {
                                 action,
@@ -141,7 +141,7 @@ fn signal_action(action: SignedActionHashed) -> ExternResult<()> {
             }
             Ok(())
         }
-        Action::Create(create) => {
+        ActionData::Create(create) => {
             if let EntryType::App(_) = create.entry_type {
                  match get_entry_for_action(&action.hashed.hash) {
                     Ok(Some(app_entry)) => { emit_signal(Signal::EntryCreated { action, app_entry })?; },
@@ -151,7 +151,7 @@ fn signal_action(action: SignedActionHashed) -> ExternResult<()> {
              }
             Ok(())
         }
-        Action::Update(update) => {
+        ActionData::Update(update) => {
              let maybe_app_entry = get_entry_for_action(&action.hashed.hash);
              let maybe_original_app_entry = get_entry_for_action(&update.original_action_address);
              match (maybe_app_entry, maybe_original_app_entry) {
@@ -163,7 +163,7 @@ fn signal_action(action: SignedActionHashed) -> ExternResult<()> {
              }
              Ok(())
         }
-        Action::Delete(delete) => {
+        ActionData::Delete(delete) => {
              match get_entry_for_action(&delete.deletes_address) {
                  Ok(Some(original_app_entry)) => { emit_signal(Signal::EntryDeleted { action, original_app_entry, })?; },
                  Ok(None) => { debug!("Could not get entry for signal EntryDeleted: {}", delete.deletes_address); },

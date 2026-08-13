@@ -1,5 +1,5 @@
 // ping_2_pong/dnas/ping_2_pong/zomes/integrity/ping_2_pong/src/game_validation.rs
-use hdk::prelude::*;
+use hdi::prelude::*;
 use crate::game::{Game, GameStatus};
 // Use core::time::Duration for stability if hdk::prelude::Duration is problematic
 use core::time::Duration;
@@ -8,11 +8,10 @@ use std::ops::{Add, Sub};
 
 // Validate creation of a Game entry.
 pub fn validate_create_game(
-    action: &SignedActionHashed,
+    action: &TypedAction<CreateData>,
     game: Game,
 ) -> ExternResult<ValidateCallbackResult> {
-    // 1. Check Author: Ensure the creator is Player 1 or Player 2 (if specified).
-    let author = action.action().author();
+    let author = action.author();
     // Allow Player 2 to create only if they are specified in the entry
     if game.player_1 != *author && game.player_2.as_ref() != Some(author) {
          return Ok(ValidateCallbackResult::Invalid(
@@ -37,7 +36,7 @@ pub fn validate_create_game(
      }
 
      // 4. Check Timestamp plausibility (within reason, e.g., +/- 5 mins from action time)
-     let action_time = action.action().timestamp();
+     let action_time = action.timestamp();
      let five_minutes = Duration::from_secs(300);
 
      // Perform subtraction and map error
@@ -110,7 +109,7 @@ pub fn validate_update_game(
          || updated_game.ball_y != original_game.ball_y
      {
           if updated_game.game_status == GameStatus::Finished && original_game.game_status != GameStatus::Finished {
-               warn!("Allowing update to paddle/ball positions as game transitions to Finished state.");
+                // Allowing update to paddle/ball positions as game transitions to Finished state
           } else if updated_game.game_status == GameStatus::Finished && original_game.game_status == GameStatus::Finished {
                 return Ok(ValidateCallbackResult::Invalid( "Cannot update paddle/ball positions on an already Finished game".to_string() ));
           } else {

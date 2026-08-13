@@ -69,13 +69,16 @@
     }
   };
 
+  let isMounted = true;
+
   // --- Presence Publishing ---
   async function publishPresence() {
       const regStatus = get(isRegistered);
-      if (!client || !regStatus) return;
+      if (!isMounted || !client || !regStatus) return;
       try {
           await client.callZome({ cap_secret: null, role_name: HOLOCHAIN_ROLE_NAME, zome_name: HOLOCHAIN_ZOME_NAME, fn_name: "publish_presence", payload: null, });
       } catch(e) {
+          if (!isMounted) return;
           if ((e as HolochainError).message.includes("source chain head has moved")) {
               console.warn("Presence publishing skipped due to source chain conflict (likely harmless).");
           } else {
@@ -246,23 +249,29 @@
   onMount(async () => {
     try {
       loading = true;
-      client = await appClientContext.getClient();
+      const fetchedClient = await appClientContext.getClient();
+      if (!isMounted) return;
+      client = fetchedClient;
       if (client) {
           unsubscribeFromSignals = client.on("signal", handleSignal);
           await checkAndLoadExistingProfile(client);
+          if (!isMounted) return;
           await publishPresence();
+          if (!isMounted) return;
       }
       presenceIntervalId = setInterval(publishPresence, 60000);
     } catch (e) { 
+      if (!isMounted) return;
       console.error("Failed to initialize Holochain client or load profile:", e);
       error = e as HolochainError;
     }
     finally { 
-      loading = false; 
+      if (isMounted) loading = false; 
     }
   });
 
   onDestroy(() => {
+      isMounted = false;
       if (unsubscribeFromSignals) { unsubscribeFromSignals(); /* console.log("App.svelte signal listener detached."); */ } // Info
       if (presenceIntervalId) { clearInterval(presenceIntervalId); }
       // console.log("App destroyed"); // Info
@@ -326,7 +335,6 @@
       <StatisticsDashboard />
     {:else}
        <Dashboard on:join-game={handleJoinGame} bind:this={dashboardComponent} />
-       {() => { if (route !== 'dashboard') { console.warn(`Unknown route: ${route}, defaulting.`); setTimeout(() => currentRoute.set('dashboard'), 0); } return ''; }}
     {/if}
 
     {#if showOpponentLeftPopup && opponentWhoLeftNickname && opponentWhoLeftAgentKeyB64}

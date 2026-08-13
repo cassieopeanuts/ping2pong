@@ -1,5 +1,5 @@
 // ping_2_pong/dnas/ping_2_pong/zomes/integrity/ping_2_pong/src/game.rs
-use hdk::prelude::*;
+use hdi::prelude::*;
 
 // Define the Game Status enum.
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq, Eq)]

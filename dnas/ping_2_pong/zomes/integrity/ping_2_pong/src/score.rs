@@ -1,5 +1,5 @@
 // ping_2_pong/dnas/ping_2_pong/zomes/integrity/ping_2_pong/src/score.rs
-use hdk::prelude::*;
+use hdi::prelude::*;
 
 // Score entry, recorded at the end of a game for one player.
 #[hdk_entry_helper]

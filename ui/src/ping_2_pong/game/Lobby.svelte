@@ -7,9 +7,11 @@
   import { clientContext, type ClientContext } from "../../contexts";
   import type { PlayerStatus, Game } from "../ping_2_pong/types"; // Removed GameInvitationSignal
   import { decode } from "@msgpack/msgpack";
-  import { HOLOCHAIN_ROLE_NAME, HOLOCHAIN_ZOME_NAME } from "../../holochainConfig";
+  import { get as getStoreValue } from "svelte/store";
+  import { currentGame } from "../../stores/currentGame";
   import { getOrFetchProfile, type DisplayProfile } from "../../stores/profilesStore"; // Import profile store
   import { truncatePubkey } from "../../utils"; // Import global truncatePubkey
+  import { HOLOCHAIN_ROLE_NAME, HOLOCHAIN_ZOME_NAME } from "../../holochainConfig";
 
   const dispatch = createEventDispatcher();
   let client: AppClient;
@@ -97,7 +99,7 @@
 
   // Periodically fetch online users and their game status
   async function fetchOnlineUsersAndStatus() {
-    if (fetchingUsers || !client) return;
+    if (!isMounted || fetchingUsers || !client) return;
     fetchingUsers = true;
     fetchError = null;
     try {
@@ -105,6 +107,8 @@
           cap_secret: null, role_name: HOLOCHAIN_ROLE_NAME, zome_name: HOLOCHAIN_ZOME_NAME,
           fn_name: "get_online_users", payload: null
         });
+
+      if (!isMounted) return;
 
       const userPromises = fetchedPubKeys.map(async (pubKey) => {
         const pubKeyB64 = encodeHashToBase64(pubKey);
@@ -116,27 +120,33 @@
           if (profile) nickname = profile.nickname;
         } catch (e) {}
 
-        try {
-          const statusResult = await client.callZome({
-            cap_secret: null,
-            role_name: HOLOCHAIN_ROLE_NAME,
-            zome_name: HOLOCHAIN_ZOME_NAME,
-            fn_name: "get_player_status",
-            payload: pubKey,
-          });
-          if (typeof statusResult === "string") {
-            status = statusResult as PlayerStatus;
-          } else {
+        if (client && client.myPubKey && encodeHashToBase64(pubKey) === encodeHashToBase64(client.myPubKey)) {
+          status = getStoreValue(currentGame) ? "InGame" : "Available";
+        } else {
+          try {
+            const statusResult = await client.callZome({
+              cap_secret: null,
+              role_name: HOLOCHAIN_ROLE_NAME,
+              zome_name: HOLOCHAIN_ZOME_NAME,
+              fn_name: "get_player_status",
+              payload: pubKey,
+            });
+            if (typeof statusResult === "string") {
+              status = statusResult as PlayerStatus;
+            } else {
+              status = "Error";
+            }
+          } catch (e) {
             status = "Error";
           }
-        } catch (e) {
-          status = "Error";
         }
 
         return { pubKey, pubKeyB64, nickname, status };
       });
 
-      onlineUsers = await Promise.all(userPromises);
+      const results = await Promise.all(userPromises);
+      if (!isMounted) return;
+      onlineUsers = results;
       // Initial render might show loading, then updates as promises resolve
       // No need for final onlineUsers = [...onlineUsers] here as it's done within loops
 
@@ -147,24 +157,36 @@
             console.warn("Skipping online users update due to source chain conflict.");
         } else {
             fetchError = errorMsg;
-            onlineUsers = []; // Clear list on other errors
         }
     } finally {
         fetchingUsers = false;
+        if (isMounted) scheduleNextFetch();
     }
   }
 
+  function scheduleNextFetch() {
+    if (pollTimeoutId) clearTimeout(pollTimeoutId);
+    if (!isMounted) return;
+    pollTimeoutId = setTimeout(async () => {
+      if (!isMounted) return;
+      await fetchOnlineUsersAndStatus();
+    }, 11000);
+  }
+
   // --- Lifecycle ---
-  let onlineInterval: ReturnType<typeof setInterval>;
+  let pollTimeoutId: ReturnType<typeof setTimeout> | undefined;
+  let isMounted = true;
 
   onMount(async () => {
-    client = await appClientContext.getClient();
+    const fetchedClient = await appClientContext.getClient();
+    if (!isMounted) return;
+    client = fetchedClient;
     await fetchOnlineUsersAndStatus(); // Initial fetch
-    onlineInterval = setInterval(fetchOnlineUsersAndStatus, 11000); // Fetch status periodically
   });
 
   onDestroy(() => {
-    clearInterval(onlineInterval); // Clear interval on component destroy
+    isMounted = false;
+    if (pollTimeoutId) clearTimeout(pollTimeoutId); // Clear timeout on component destroy
   });
 
 </script>
@@ -184,7 +206,6 @@
             <li>
               <span class="user-details" title={user.pubKeyB64}>
                 <span class="nickname">{user.nickname || truncatePubkey(user.pubKeyB64, 6, 4)}</span>
-                <span class="dots"></span>
                 {#if user.status === 'Loading'}
                   <span class="status status-loading">LOADING</span>
                 {:else if user.status === 'Error'}
@@ -213,66 +234,84 @@
 
 <style>
   .lobby {
-    padding: 1rem;
+    padding: 0;
     text-align: center;
-    color: var(--secondary-text-color); /* Was #fff */
+    color: var(--secondary-text-color);
     display: flex;
     flex-direction: column;
-    gap: 1.5rem;
+    gap: 1rem;
+    width: 100%;
+    box-sizing: border-box;
   }
   .online-users {
     margin: 0;
-    padding: 1rem;
-    background-color: var(--container-bg-color); /* Was #3a3a3a */
-    border-radius: 8px;
-    color: var(--secondary-text-color); /* Was #e0e0e0 */
+    padding: 0.6rem;
+    background-color: var(--container-bg-color);
+    border-radius: 0px;
+    border: 2px solid var(--border-color);
+    color: var(--secondary-text-color);
+    width: 100%;
+    box-sizing: border-box;
+    overflow-x: hidden;
   }
   .online-users h2 {
     margin-top: 0;
-    color: var(--primary-text-color); /* Was orange */
-    font-weight: bold; /* Kept bold as it's a heading style */
-    font-size: 1.25rem; /* 20px. Global h2 is 2.2em (35.2px) */
+    margin-bottom: 0.4rem;
+    color: var(--primary-text-color);
+    font-weight: bold;
+    font-size: 1.05rem;
     line-height: 1.2;
   }
   .online-users ul {
     list-style: none;
     padding: 0;
     margin: 0;
-    max-height: 200px; /* Kept as is, functional style */
-    overflow-y: auto; /* Kept as is, functional style */
+    max-height: 250px;
+    overflow-y: auto;
   }
   .online-users li {
-    font-size: 0.8rem;
-    line-height: 1.4;
-    margin: 0.8rem 0;
+    font-size: 0.65rem;
+    line-height: 1.2;
+    margin: 0.4rem 0;
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 0.5rem;
+    padding: 0.35rem 0.4rem;
     border: 2px solid var(--border-color);
     background-color: var(--primary-bg-color);
+    gap: 0.3rem;
   }
   .user-details {
     display: flex;
     align-items: center;
     flex-grow: 1;
-    margin-right: 1.5rem;
+    min-width: 0;
+    margin-right: 0;
+    gap: 0.3rem;
+    overflow: hidden;
   }
   .nickname {
     color: var(--secondary-text-color);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex-shrink: 1;
+    min-width: 0;
   }
-  .dots {
-    flex-grow: 1;
-    border-bottom: 2px dotted var(--primary-text-color);
-    margin: 0 12px;
-    height: 10px;
+  .online-users button {
+    padding: 0.3em 0.5em;
+    font-size: 0.6rem;
+    white-space: nowrap;
+    flex-shrink: 0;
   }
   .status {
-    font-size: 0.7rem;
-    padding: 2px 6px;
+    font-size: 0.6rem;
+    padding: 1px 4px;
     border: 1px solid currentColor;
     font-weight: bold;
     display: inline-block;
+    flex-shrink: 0;
+    white-space: nowrap;
   }
   .status-loading {
     color: #888888;

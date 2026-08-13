@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, getContext } from "svelte";
+  import { onMount, onDestroy, getContext } from "svelte";
   import type { AppClient, Record, HolochainError, Game } from "@holochain/client"; // AgentPubKey and ActionHash implicitly used via Game
   import { clientContext, type ClientContext } from "../../contexts";
   import { decode } from "@msgpack/msgpack";
@@ -10,9 +10,16 @@
   let statusMessage: string | null = null;
   let client: AppClient;
   const appClientContext = getContext<ClientContext>(clientContext);
+  let isMounted = true;
 
   onMount(async () => {
-    client = await appClientContext.getClient();
+    const fetchedClient = await appClientContext.getClient();
+    if (!isMounted) return;
+    client = fetchedClient;
+  });
+
+  onDestroy(() => {
+    isMounted = false;
   });
 
   async function joinOrCreateGame() {

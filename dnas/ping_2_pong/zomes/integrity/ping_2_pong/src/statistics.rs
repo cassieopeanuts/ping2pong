@@ -1,5 +1,5 @@
 // ping_2_pong/dnas/ping_2_pong/zomes/integrity/ping_2_pong/src/statistics.rs
-use hdk::prelude::*;
+use hdi::prelude::*;
 
 // Statistics entry recorded after a game finishes.
 #[hdk_entry_helper]

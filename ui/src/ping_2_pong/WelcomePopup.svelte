@@ -25,6 +25,17 @@
       client = await appClientContext.getClient();
       const agentKey: AgentPubKey = client.myPubKey; // Get the raw AgentPubKey
 
+      // Same-Name Cop: Check if nickname is available
+      const isAvailable: boolean = await client.callZome({
+        cap_secret: null, role_name: HOLOCHAIN_ROLE_NAME, zome_name: HOLOCHAIN_ZOME_NAME,
+        fn_name: "check_name_availability", payload: nickname.trim(),
+      });
+
+      if (!isAvailable) {
+        errorMessage = `Nickname '${nickname.trim()}' is already taken. Please choose another name.`;
+        return;
+      }
+
       const playerPayload = { player_key: agentKey, player_name: nickname.trim() };
 
       const record = await client.callZome({
@@ -33,9 +44,9 @@
       });
       console.log("Player created:", record);
 
-      // FIX: Set profile store with the raw AgentPubKey
+      // Set profile store with raw AgentPubKey
       playerProfile.set({
-        agentKey: agentKey, // Store the object/Uint8Array
+        agentKey: agentKey,
         nickname: nickname.trim()
       });
 

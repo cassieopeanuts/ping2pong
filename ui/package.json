@@ -7,7 +7,7 @@
     "package": "npm run build && rimraf dist.zip && cd dist && bestzip ../dist.zip *"
   },
   "dependencies": {
-    "@holochain/client": "^0.20.0",
+    "@holochain/client": "^0.21.0",
     "@msgpack/msgpack": "^2.8.0"
   },
   "devDependencies": {

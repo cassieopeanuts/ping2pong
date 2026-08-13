@@ -29,23 +29,24 @@
 }
 
 html {
-  height: 100%;
-  overflow: hidden;
+  min-height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
 }
 
 body {
   font-family: 'Press Start 2P', monospace; /* Monospace is a good fallback for 8-bit fonts */
-  /* font-family: var(--font-family); */ /* Original line, now superseded by direct application */
   line-height: 1.6;
   font-weight: 400;
   color: var(--secondary-text-color);
   background-color: var(--primary-bg-color); /* This will be the color outside the .app-main window */
   margin: 0;
-  padding: 0; /* Removed display:flex, justify-content, align-items, min-height, padding-top */
-  height: 100%;
-  overflow: hidden;
-  text-align: center; /* Kept for now */
-  min-width: 320px; /* Kept min-width */
+  padding: 0;
+  min-height: 100vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  text-align: center;
+  min-width: 320px;
 }
 
 h1, h2, h3, h4, h5, h6 {
@@ -136,30 +137,31 @@ select:focus {
 .app-main {
   display: flex;
   flex-direction: column;
-  align-items: center; /* This centers children of .app-main, like user-header, dashboard-layout - kept as per self-correction */
-  justify-content: flex-start; /* Keep if header is at top, content below */
-  width:100%; /* Ensure it takes full width */
-  height: 100vh; /* Or 100% if body/html are 100% - using 100vh for full viewport */
-  background-color: var(--primary-bg-color); /* Changed from #222 */
+  align-items: center;
+  justify-content: flex-start;
+  width: 100%;
+  min-height: 100vh;
+  background-color: var(--primary-bg-color);
   margin: 0;
-  overflow: hidden; /* Key change: prevent .app-main itself from scrolling */
-  box-sizing: border-box; /* Add for consistent padding behavior if padding is re-added */
-  /* padding-top: 10px; removed */
-  /* min-height: 0; removed */
-  /* min-height: 100vh; original presence of this implies height:100vh is desired */
+  overflow-y: auto;
+  overflow-x: hidden;
+  box-sizing: border-box;
+  padding: 0.5rem;
 }
 
 .user-header {
-  color: var(--primary-text-color); /* Orange */
-  padding: 0.75rem 1.5rem;
+  color: var(--primary-text-color);
+  padding: 0.5rem 1rem;
   text-align: center;
-  width: 60%; /* Adjusted width */
-  max-width: 500px; /* Max width for very large screens */
-  background-color: var(--secondary-bg-color); /* Darker gray */
-  margin: 1rem auto 1.5rem auto; /* Top, auto horizontal, bottom */
-  border-radius: 0px; /* Blocky */
-  border: 2px solid var(--border-color); /* Added border */
-  box-shadow: 0 2px 4px rgba(0,0,0,0.3); /* Keep shadow for depth, or remove if strictly 2D */
+  width: 90%;
+  max-width: 600px;
+  background-color: var(--secondary-bg-color);
+  margin: 0.5rem auto 1rem auto;
+  border-radius: 0px;
+  border: 2px solid var(--border-color);
+  box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+  box-sizing: border-box;
+  font-size: clamp(0.7rem, 2vw, 0.95rem);
 }
 
 .user-header p {
@@ -235,44 +237,62 @@ select:focus {
 
 /* Dashboard.svelte specific styles */
 .dashboard-layout {
-  display: grid; /* Changed back to grid */
-  grid-template-columns: 1fr minmax(auto, 600px) 1fr; /* 3-column layout */
-  gap: 1.5rem; /* Gap between columns */
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: 1rem;
   width: 100%;
-  max-width: 1400px; /* Increased max-width for wider layout */
-  /* Adjusted height considering body padding and user-header. This might need dynamic calculation or different approach if header height varies significantly. */
-  min-height: calc(100vh - 80px - 3rem); /* body padding-top 20px + user-header margin 1rem + 1.5rem = ~80px approx */
+  max-width: 1400px;
   background: var(--primary-bg-color);
-  padding: 1rem;
+  padding: 0.5rem;
   margin: 0 auto;
-  align-items: flex-start; /* Align columns at the top */
+  align-items: flex-start;
+  box-sizing: border-box;
+}
+
+@media (max-width: 900px) {
+  .dashboard-layout {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+  }
+}
+
+.dashboard-col-left,
+.dashboard-col-center,
+.dashboard-col-right,
+.dashboard-sidebar-left,
+.dashboard-sidebar-right {
+  width: 100%;
+  min-width: 0; /* Prevents overflow from children breaking grid layout */
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
 }
 
 .dashboard-sidebar-left, .dashboard-sidebar-right {
   background: var(--secondary-bg-color);
   color: var(--secondary-text-color);
-  padding: 1.5rem;
-  border-radius: 0px; /* Blocky */
-  border: 2px solid var(--border-color); /* Added border */
-  box-shadow: 0 2px 5px rgba(0,0,0,0.2); /* Keep shadow */
+  padding: 1.25rem;
+  border-radius: 0px;
+  border: 2px solid var(--border-color);
+  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
   overflow-y: auto;
-  display: flex; /* To help content within fill height if necessary */
-  flex-direction: column;
-  height: 100%; /* Ensure sidebars take full available height of the grid row */
+  height: 100%;
 }
 
 .dashboard-col-center {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: flex-start; /* Align PlayButton to top, chat will go below */
-  padding: 1rem;
-  gap: 1.5rem; /* Space between PlayButton and future chat */
+  justify-content: flex-start;
+  padding: 0.5rem;
+  gap: 1.25rem;
 }
 
-/* Specific styling for components if they are direct children of new layout classes */
-.dashboard-sidebar-left > *, .dashboard-sidebar-right > * {
-    flex-grow: 1; /* Allow content like Leaderboard/Lobby to grow */
+.dashboard-col-left > *, .dashboard-col-right > *, .dashboard-sidebar-left > *, .dashboard-sidebar-right > * {
+    flex-grow: 1;
+    width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
 }
 
 /* Global Chat Placeholder styles */

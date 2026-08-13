@@ -6,9 +6,16 @@ use ping_2_pong_integrity::game::GameStatus;
 
 // Public function definition within this module (crate::utils)
 // This function delegates the call to the actual implementation in the integrity crate.
+use ping_2_pong_integrity::{AnchorPath, EntryTypes};
+
 pub fn anchor_for(input: &str) -> ExternResult<AnyLinkableHash> {
-    // Use the full path to call the function in the integrity crate's utils module
-    ping_2_pong_integrity::utils::anchor_for(input)
+    let path = Path::from(input);
+    let path_hash = path.path_entry_hash()?;
+    let maybe_record = get(path_hash.clone(), GetOptions::network())?;
+    if maybe_record.is_none() {
+        create_entry(&EntryTypes::AnchorPath(AnchorPath(path.clone())))?;
+    }
+    Ok(AnyLinkableHash::from(path_hash))
 }
 
 

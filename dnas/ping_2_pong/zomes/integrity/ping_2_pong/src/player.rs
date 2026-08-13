@@ -1,5 +1,5 @@
 // ping_2_pong/dnas/ping_2_pong/zomes/integrity/ping_2_pong/src/player.rs
-use hdk::prelude::*;
+use hdi::prelude::*;
 
 // Player profile entry.
 #[hdk_entry_helper]

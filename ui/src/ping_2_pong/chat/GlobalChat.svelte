@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount, getContext, onDestroy } from 'svelte';
-  import { globalChatMessages } from '../../stores/chatStore';
+  import { globalChatMessages, addChatMessage, clearChatMessages } from '../../stores/chatStore';
   import { clientContext, type ClientContext } from '../../contexts'; // Added ClientContext for typing
   import type { AppClient, AgentPubKeyB64 } from '@holochain/client'; // Added AgentPubKeyB64
+  import { encodeHashToBase64 } from '@holochain/client';
   import { truncatePubkey } from '../../utils';
   import { HOLOCHAIN_ROLE_NAME, HOLOCHAIN_ZOME_NAME } from '../../holochainConfig';
   import { writable, get as getStoreValue } from 'svelte/store'; // Added Svelte store imports
@@ -19,13 +20,10 @@
   const appClientContext = getContext<ClientContext>(clientContext); // Typed getContext
 
   function getSenderNickname(senderB64: string): string {
-    const cached = $profilesCache.get(senderB64);
+    const cached = getStoreValue(profilesCache).get(senderB64);
     if (cached && cached.nickname) return cached.nickname;
     return truncatePubkey(senderB64, 4, 4);
   }
-
-  // Removed old getClient() as client is now initialized in onMount and passed around.
-  // The sendMessage function will use the module-level 'client'.
 
   async function sendMessage() {
     if (!messageContent.trim()) return;
@@ -33,14 +31,12 @@
     if (!client) { // Check if the module-level client is initialized
       sendError = "Holochain client not ready. Please wait or refresh.";
       console.error("sendMessage called before client was initialized.");
-      // isSending = false; // isSending is set true below, ensure it's handled if returning early
-      return; // Do not proceed if client is not ready
+      return;
     }
 
     isSending = true;
     sendError = null;
     try {
-      // No longer call getClient(), use the module-level 'client' directly
       await client.callZome({
         cap_secret: null,
         role_name: HOLOCHAIN_ROLE_NAME,
@@ -67,20 +63,76 @@
     return new Date(timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   }
 
+  let isMounted = true;
+  let scrollTimeoutId: ReturnType<typeof setTimeout> | undefined;
+
   // Basic auto-scroll
   function scrollToBottom() {
-    if (chatBox) {
+    if (chatBox && isMounted) {
       // Use requestAnimationFrame to wait for DOM updates before scrolling
       requestAnimationFrame(() => {
-        chatBox.scrollTop = chatBox.scrollHeight;
+        if (chatBox && isMounted) {
+          chatBox.scrollTop = chatBox.scrollHeight;
+        }
       });
     }
   }
 
   onMount(async () => {
-    client = await appClientContext.getClient();
+    const fetchedClient = await appClientContext.getClient();
+    if (!isMounted) return;
+    client = fetchedClient;
+
+    // Load persisted chat history from DHT chain
+    try {
+      const historySignals: any[] = await client.callZome({
+        cap_secret: null,
+        role_name: HOLOCHAIN_ROLE_NAME,
+        zome_name: HOLOCHAIN_ZOME_NAME,
+        fn_name: "get_latest_chat_messages",
+        payload: null,
+      });
+
+      if (isMounted && Array.isArray(historySignals)) {
+        clearChatMessages();
+        historySignals.forEach((sig) => {
+          let s = sig;
+          if (sig?.type === "GlobalChatMessage") {
+            const sender = s.sender;
+            const content = s.content;
+            const timestamp = s.timestamp;
+
+            let senderB64 = "";
+            if (typeof sender === "string") {
+                senderB64 = sender;
+            } else if (sender) {
+                try { senderB64 = encodeHashToBase64(sender); } catch(e) { senderB64 = String(sender); }
+            }
+
+            let messageTimestamp = Date.now();
+            if (typeof timestamp === "number") {
+                messageTimestamp = timestamp > 1e12 ? Math.floor(timestamp / 1000) : timestamp;
+            } else if (Array.isArray(timestamp) && timestamp.length >= 1) {
+                messageTimestamp = timestamp[0] * 1000 + Math.floor((timestamp[1] || 0) / 1000000);
+            }
+
+            if (content && typeof content === "string") {
+                addChatMessage({
+                    type: "GlobalChatMessage",
+                    sender: senderB64,
+                    content: content,
+                    timestamp: messageTimestamp,
+                });
+            }
+          }
+        });
+      }
+    } catch (e) {
+      console.warn("Could not load chat history from chain:", e);
+    }
 
     unsubscribeFromStore = globalChatMessages.subscribe((messages) => {
+      if (!isMounted) return;
       if (messages.length > 0) {
         scrollToBottom();
         const lastMsg = messages[messages.length - 1];
@@ -89,12 +141,16 @@
         }
       }
     });
-    setTimeout(scrollToBottom, 50);
+    scrollTimeoutId = setTimeout(scrollToBottom, 50);
   });
 
   onDestroy(() => {
+    isMounted = false;
     if (unsubscribeFromStore) {
       unsubscribeFromStore();
+    }
+    if (scrollTimeoutId) {
+      clearTimeout(scrollTimeoutId);
     }
   });
 

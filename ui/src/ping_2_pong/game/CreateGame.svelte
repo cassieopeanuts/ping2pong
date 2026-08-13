@@ -1,12 +1,15 @@
 <script lang="ts">
   import type { ActionHash, AgentPubKey, AppClient, HolochainError, Record } from "@holochain/client";
-  import { createEventDispatcher, getContext, onMount } from "svelte";
+  import { createEventDispatcher, getContext, onMount, onDestroy } from "svelte";
   import { clientContext, type ClientContext } from "../../contexts";
   import type { Game, GameStatus } from "../ping_2_pong/types";
+
+  import { HOLOCHAIN_ROLE_NAME, HOLOCHAIN_ZOME_NAME } from "../../holochainConfig";
 
   const dispatch = createEventDispatcher();
   let client: AppClient;
   const appClientContext = getContext<ClientContext>(clientContext);
+  let isMounted = true;
 
   // For game creation, only one agent (the host) creates the game.
   let player1: AgentPubKey;
@@ -22,10 +25,16 @@
   $: isGameValid = true;
 
   onMount(async () => {
-    client = await appClientContext.getClient();
+    const fetchedClient = await appClientContext.getClient();
+    if (!isMounted) return;
+    client = fetchedClient;
     // Use the current agent's public key as player1.
     player1 = client.myPubKey;
     // player2 remains undefined
+  });
+
+  onDestroy(() => {
+    isMounted = false;
   });
 
   async function createGame() {
@@ -44,8 +53,8 @@
     try {
       const record: Record = await client.callZome({
         cap_secret: null,
-        role_name: "ping_2_pong",
-        zome_name: "ping_2_pong",
+        role_name: HOLOCHAIN_ROLE_NAME,
+        zome_name: HOLOCHAIN_ZOME_NAME,
         fn_name: "create_game",
         payload: gameEntry,
       });

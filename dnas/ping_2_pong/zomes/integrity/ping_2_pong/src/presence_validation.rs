@@ -1,20 +1,20 @@
 // ping_2_pong/dnas/ping_2_pong/zomes/integrity/ping_2_pong/src/presence_validation.rs
-use hdk::prelude::*;
+use hdi::prelude::*;
 use crate::presence::Presence;
 
 pub fn validate_create_presence(
-    action: &SignedActionHashed,
+    action: &TypedAction<CreateData>,
     presence: Presence,
 ) -> ExternResult<ValidateCallbackResult> {
     // 1. Check Author matches agent_pubkey
-    if presence.agent_pubkey != *action.action().author() {
+    if presence.agent_pubkey != *action.author() {
         return Ok(ValidateCallbackResult::Invalid(
             "Presence entry author must match agent_pubkey field".to_string(),
         ));
     }
 
     // 2. Check Timestamp plausibility (not too far in past/future)
-     let action_time_ms = action.action().timestamp().as_millis(); // This is i64
+     let action_time_ms = action.timestamp().as_millis(); // This is i64
      let five_minutes_ms: i64 = 300_000; // 5 * 60 * 1000
 
      // Calculate bounds as i64
@@ -26,11 +26,11 @@ pub fn validate_create_presence(
      // and that saturating_sub doesn't produce negative results we care about here.
      if presence.timestamp < (lower_bound_i64 as u64) || presence.timestamp > (upper_bound_i64 as u64) {
          // Added check: Ensure lower_bound_i64 wasn't negative before casting, although highly unlikely
-         if lower_bound_i64 < 0 {
-              warn!("Calculated lower bound for presence timestamp was negative: {}", lower_bound_i64);
-              // Optionally make this invalid? Or allow if timestamp is positive?
-              // Let's allow for now, just warning.
-         }
+          let _lower_bound = if lower_bound_i64 < 0 {
+              Timestamp(0)
+          } else {
+              Timestamp(lower_bound_i64 as i64)
+          };
          // Return invalid only if the u64 comparison fails
          if presence.timestamp < (lower_bound_i64 as u64) || presence.timestamp > (upper_bound_i64 as u64) {
             return Ok(ValidateCallbackResult::Invalid(

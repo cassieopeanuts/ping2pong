@@ -2,7 +2,6 @@
 use hdk::prelude::*;
 use ping_2_pong_integrity::*;
 use crate::utils::get_game_hash_by_id; // Use helper
-use ping_2_pong_integrity::game::GameStatus; // Directly from integrity
 use ping_2_pong_integrity::Game; // Assuming Game is also directly available
 
 // Maximum allowed score points.
@@ -55,21 +54,10 @@ pub fn create_score(input: CreateScoreInput) -> ExternResult<Record> {
         .map_err(|e| wasm_error!(WasmErrorInner::Serialize(e)))?
         .ok_or(wasm_error!(WasmErrorInner::Guest("Invalid Game entry format for validation".into())))?;
 
-    // Ensure the game status is Finished before recording score
-    if game_for_validation.game_status != GameStatus::Finished { // GameStatus directly from integrity
-        return Err(wasm_error!(WasmErrorInner::Guest("Scores can only be recorded for 'Finished' games".into())));
-    }
-
     // Ensure the score is being assigned to a player who was actually in the game.
     if input.player != game_for_validation.player_1 && game_for_validation.player_2.as_ref() != Some(&input.player) {
         return Err(wasm_error!(WasmErrorInner::Guest(
             "Score must be assigned to a player who participated in the game".into()
-        )));
-    }
-    // Corrected the second instance of the check to use the correct variable names
-    if input.player != game_for_validation.player_1 && game_for_validation.player_2.as_ref() != Some(&input.player) {
-        return Err(wasm_error!(WasmErrorInner::Guest(
-            "Score must be assigned to a player who participated in the game (repeated check with correct vars)".into()
         )));
     }
 

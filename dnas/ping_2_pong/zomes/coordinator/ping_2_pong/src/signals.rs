@@ -1,6 +1,6 @@
 // ping_2_pong/dnas/ping_2_pong/zomes/coordinator/ping_2_pong/src/signals.rs
 use hdk::prelude::*;
-use crate::{Signal, Game};
+use crate::Signal;
 
 /// ───────────────────────── init helper ─────────────────────────
 pub fn grant_remote_signal_cap() -> ExternResult<()> {
@@ -63,31 +63,8 @@ pub struct GameAbandonedPayload {
     pub recipient: Option<AgentPubKey>,
 }
 
-/// Return the `Record` at the *tip* of an update chain
-fn latest_record(original: &ActionHash) -> ExternResult<Record> {
-    let mut current = original.clone();
-
-    loop {
-        let details = get_details(current.clone(), GetOptions::default())?
-            .ok_or(wasm_error!("Game details not found"))?;
-
-        match details {
-            Details::Record(rec) => {
-                // Any further updates?
-                if let Some(update) = rec.updates.last() {
-                    current = update.action_address().clone();
-                } else {
-                    return Ok(rec.record);
-                }
-            }
-            // Only `Record` details make sense for an ActionHash.
-            _ => return Err(wasm_error!("Unexpected details variant")),
-        }
-    }
-}
-
 /// ───────────────────── broadcast helper ──────────────────────
-fn broadcast_signal(recipient: Option<AgentPubKey>, game_id: &ActionHash, signal: &Signal) -> ExternResult<()> {
+fn broadcast_signal(recipient: Option<AgentPubKey>, _game_id: &ActionHash, signal: &Signal) -> ExternResult<()> {
     let signal_io = ExternIO::encode(signal).map_err(|e| wasm_error!(WasmErrorInner::Guest(e.to_string())))?;
 
     if let Some(target) = recipient {
@@ -101,41 +78,6 @@ fn broadcast_signal(recipient: Option<AgentPubKey>, game_id: &ActionHash, signal
                 signal_io,
             );
         }
-        return Ok(());
-    }
-
-    // Fallback to DHT lookup if recipient not explicitly provided
-    broadcast_to_opponents(game_id, signal)
-}
-
-fn broadcast_to_opponents(game_id: &ActionHash, signal: &Signal) -> ExternResult<()> {
-    // 1. load the *latest* Game entry
-    let record = latest_record(game_id)?;
-    let game: Game = record
-        .entry()
-        .to_app_option::<Game>()
-        .map_err(|e| wasm_error!(e.to_string()))?
-        .ok_or(wasm_error!("Malformed Game entry"))?;
-
-    // 2. build recipient list (everyone except me)
-    let me = agent_info()?.agent_initial_pubkey;
-    let recipients = [&Some(game.player_1.clone()), &game.player_2]
-        .iter()
-        .filter_map(|o| o.as_ref())
-        .filter(|pk| **pk != me)
-        .cloned()
-        .collect::<Vec<_>>();
-
-    // 3. fire-and-forget
-    let signal_io = ExternIO::encode(signal).map_err(|e| wasm_error!(WasmErrorInner::Guest(e.to_string())))?;
-    for agent in recipients {
-        let _ = call_remote(
-            agent,
-            "ping_2_pong",               // zome
-            "receive_remote_signal".into(),
-            None,                        // no cap secret
-            signal_io.clone(),           // payload
-        );
     }
     Ok(())
 }

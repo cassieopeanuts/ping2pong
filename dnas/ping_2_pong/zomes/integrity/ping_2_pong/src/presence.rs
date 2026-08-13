@@ -1,5 +1,5 @@
 // ping_2_pong/dnas/ping_2_pong/zomes/integrity/ping_2_pong/src/presence.rs
-use hdk::prelude::*;
+use hdi::prelude::*;
 
 // Presence entry to indicate recent activity.
 #[hdk_entry_helper]

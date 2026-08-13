@@ -1,14 +1,16 @@
 <script lang="ts">
-  import { onMount, getContext } from "svelte";
+  import { onMount, onDestroy, getContext } from "svelte";
   import type { AppClient, AgentPubKey, AgentPubKeyB64 } from "@holochain/client"; // Added AgentPubKeyB64
   import { encodeHashToBase64 } from "@holochain/client"; // For converting raw AgentPubKey
   import { clientContext, type ClientContext } from "../../contexts";
   import { HOLOCHAIN_ROLE_NAME, HOLOCHAIN_ZOME_NAME } from "../../holochainConfig";
+  import { get as getStoreValue } from "svelte/store";
   import { getOrFetchProfile, profilesCache, type DisplayProfile } from "../../stores/profilesStore";
   import { truncatePubkey } from "../../utils";
 
   let client: AppClient;
   const appClientContext = getContext<ClientContext>(clientContext);
+  let isMounted = true;
   
   interface LeaderboardEntryData {
       player_key_b64: AgentPubKeyB64; // Storing as B64 string for map keys and direct use
@@ -20,7 +22,7 @@
   let isLoading: boolean = true;
   let errorMessage: string | null = null;
 
-  function getNickname(playerKeyB64: AgentPubKeyB64, fallbackNickname?: string): string {
+  function getNickname(playerKeyB64: AgentPubKeyB64, fallbackNickname?: string, _cacheMap?: Map<AgentPubKeyB64, DisplayProfile>): string {
       if (fallbackNickname) return fallbackNickname;
       const cached = $profilesCache.get(playerKeyB64);
       if (cached && cached.nickname) return cached.nickname;
@@ -29,19 +31,27 @@
 
   onMount(async () => {
     try {
-      client = await appClientContext.getClient();
+      const fetchedClient = await appClientContext.getClient();
+      if (!isMounted) return;
+      client = fetchedClient;
       await fetchLeaderboard();
     } catch (e: any) {
+      if (!isMounted) return;
       console.error("Error initializing leaderboard:", e);
       errorMessage = e.message || "Failed to initialize leaderboard client.";
       isLoading = false;
     }
   });
 
+  onDestroy(() => {
+    isMounted = false;
+  });
+
   async function fetchLeaderboard() {
     isLoading = true;
     errorMessage = null;
-    if (!client) {
+    if (!isMounted || !client) {
+      if (!isMounted) return;
       errorMessage = "Client not initialized.";
       isLoading = false;
       return;
@@ -57,37 +67,39 @@
             payload: null,
       });
 
+      if (!isMounted) return;
+
       if (!rawLeaderboardEntries) {
         leaderboardData = [];
         isLoading = false;
         return;
       }
       
-      const processedEntries = rawLeaderboardEntries.map(rawEntry => ({
-          player_key_b64: encodeHashToBase64(rawEntry.player_key),
-          nickname: undefined, // Placeholder, to be filled
+      const processedEntries = rawLeaderboardEntries.map(rawEntry => {
+        const b64 = encodeHashToBase64(rawEntry.player_key);
+        const cached = $profilesCache.get(b64);
+        return {
+          player_key_b64: b64,
+          nickname: cached?.nickname,
           total_points: rawEntry.total_points,
           games_played: rawEntry.games_played,
-      }));
+        };
+      });
       leaderboardData = processedEntries;
-      // isLoading = false; // Set isLoading to false after initial data structure is set
 
       // Asynchronously fetch nicknames for each entry
-      // Use Promise.all to wait for all nickname fetches if desired, or update reactively
       await Promise.all(processedEntries.map(async (entryData, index) => {
-        const profile = await getOrFetchProfile(client, entryData.player_key_b64); // Pass B64 key
+        const profile = await getOrFetchProfile(client, entryData.player_key_b64, true);
         if (profile && profile.nickname) {
-          // Create a new object for the specific entry to ensure reactivity if needed,
-          // or reassign the whole array as done below.
           leaderboardData[index] = { ...leaderboardData[index], nickname: profile.nickname };
         }
       }));
-      leaderboardData = [...leaderboardData]; // Trigger Svelte reactivity after all potential updates
+      leaderboardData = [...leaderboardData];
 
     } catch (e: any) {
       console.error("Error fetching leaderboard data:", e);
       errorMessage = e.data?.data || e.message || "Failed to fetch leaderboard.";
-      leaderboardData = []; // Clear data on error
+      leaderboardData = [];
     } finally {
       isLoading = false;
     }
@@ -106,17 +118,17 @@
     <table>
       <thead>
         <tr>
-          <th>Rank</th>
-          <th>Player</th>
-          <th>Total Points</th>
-          <th>Games Played</th>
+          <th style="width: 15%;">#</th>
+          <th style="width: 45%;">Player</th>
+          <th style="width: 20%;">Pts</th>
+          <th style="width: 20%;">Played</th>
         </tr>
       </thead>
       <tbody>
         {#each leaderboardData as entry, i}
           <tr>
             <td>{i + 1}</td>
-            <td title={entry.player_key_b64}>{getNickname(entry.player_key_b64, entry.nickname)}</td>
+            <td title={entry.player_key_b64}>{getNickname(entry.player_key_b64, entry.nickname, $profilesCache)}</td>
             <td>{entry.total_points}</td>
             <td>{entry.games_played}</td>
           </tr>
@@ -128,31 +140,36 @@
 
 <style>
   .leaderboard {
-    padding: 1rem;
+    padding: 0.75rem;
     background: var(--container-bg-color);
     color: var(--secondary-text-color);
-    text-align: center; /* Keep this to center h3 and fallback paragraphs */
-    border-radius: 0px; /* Already blocky from global */
-    border: 2px solid var(--border-color); /* Consistent with other containers */
-    width: 100%; /* Take full width of its column */
+    text-align: center;
+    border-radius: 0px;
+    border: 2px solid var(--border-color);
+    width: 100%;
     box-sizing: border-box;
+    overflow-x: hidden;
   }
   .leaderboard h3 {
-    color: var(--primary-text-color); /* Ensure heading uses theme color */
-    margin-bottom: 1rem;
-    font-size: 1.25rem; /* 20px. Overrides global h3 1.8em (28.8px) */
-    line-height: 1.2;   /* Adjust line height */
+    color: var(--primary-text-color);
+    margin-bottom: 0.5rem;
+    font-size: 1.1rem;
+    line-height: 1.2;
   }
   table {
     width: 100%;
+    table-layout: fixed;
     border-collapse: collapse; 
-    margin-top: 1rem;
-    font-size: 0.75rem; /* 12px. Adjusted from 0.9em (14.4px) for 'Press Start 2P' */
+    margin-top: 0.5rem;
+    font-size: 0.7rem;
   }
   th, td {
     border: 2px solid var(--border-color); 
-    padding: 0.5em;
-    text-align: left;
+    padding: 0.4em 0.2em;
+    text-align: center;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   th {
     background-color: var(--secondary-bg-color); 

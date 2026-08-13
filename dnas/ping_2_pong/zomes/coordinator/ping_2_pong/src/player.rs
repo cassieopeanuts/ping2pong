@@ -5,12 +5,21 @@ use crate::utils::anchor_for; // Assuming anchor_for is accessible
 
 // Helper function to check if a player name is unique using the PlayerNameToPlayer link
 pub fn is_player_name_unique(player_name: &str) -> ExternResult<bool> {
-    let name_anchor = anchor_for(&player_name.to_lowercase())?;
+    let normalized = player_name.trim().to_lowercase();
+    if normalized.is_empty() {
+        return Ok(false);
+    }
+    let name_anchor = anchor_for(&normalized)?;
     let links = get_links(
         LinkQuery::try_new(name_anchor, LinkTypes::PlayerNameToPlayer)?,
         GetStrategy::default(),
     )?;
     Ok(links.is_empty())
+}
+
+#[hdk_extern]
+pub fn check_name_availability(player_name: String) -> ExternResult<bool> {
+    is_player_name_unique(&player_name)
 }
 
 #[hdk_extern]

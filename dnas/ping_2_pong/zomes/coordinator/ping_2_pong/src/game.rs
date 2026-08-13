@@ -530,24 +530,15 @@ pub fn get_online_users(_: ()) -> ExternResult<Vec<AgentPubKey>> {
     let presence_anchor_hash = anchor_for("presence")?;
     let presence_links = get_links(LinkQuery::try_new(presence_anchor_hash, LinkTypes::Presence)?, GetStrategy::default())?;
     
-    let all_players_path = Path::from("all_players");
-    let all_players_anchor_hash = all_players_path.path_entry_hash()?;
-    let player_links = get_links(LinkQuery::try_new(all_players_anchor_hash, LinkTypes::AllPlayersAnchorToAgentPubKey)?, GetStrategy::default())?;
-
+    let now_ms = sys_time()?.as_millis();
     let mut online_agents: Vec<AgentPubKey> = Vec::new();
 
-    // 1. Add authors of presence links
+    // Only add agents who published presence within the last 5 minutes
     for link in presence_links {
-        if !online_agents.contains(&link.author) {
-            online_agents.push(link.author);
-        }
-    }
-
-    // 2. Add targets of all_players links
-    for link in player_links {
-        if let Some(agent_pk) = link.target.into_agent_pub_key() {
-            if !online_agents.contains(&agent_pk) {
-                online_agents.push(agent_pk);
+        let link_ms = link.timestamp.as_millis();
+        if now_ms.saturating_sub(link_ms) < 300_000 {
+            if !online_agents.contains(&link.author) {
+                online_agents.push(link.author);
             }
         }
     }

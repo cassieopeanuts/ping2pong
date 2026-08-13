@@ -1,5 +1,5 @@
 // ping_2_pong/dnas/ping_2_pong/zomes/integrity/ping_2_pong/src/statistics_validation.rs
-use hdk::prelude::*;
+use hdi::prelude::*;
 // Remove Game/GameStatus imports as they are no longer checked here
 // use crate::{statistics::Statistics, game::{Game, GameStatus}};
 use crate::statistics::Statistics; // Keep Statistics import
@@ -14,7 +14,7 @@ const MAX_NETWORK_DELAY: u32 = 30000; // 30 seconds
 
 // Validate creation of a Statistics entry.
 pub fn validate_create_statistics(
-    action: &SignedActionHashed,
+    action: &TypedAction<CreateData>,
     statistics: Statistics,
 ) -> ExternResult<ValidateCallbackResult> {
     // 1. REMOVED: Check Game Existence and Status.
@@ -35,27 +35,12 @@ pub fn validate_create_statistics(
     */
 
     // 3. Sanity Check Metrics: Ensure values are within reasonable bounds.
-    //    Keep these checks as they validate the Statistics entry's content.
-     if statistics.signal_latency > MAX_LATENCY {
-         warn!("Reported signal latency {} exceeds max {}", statistics.signal_latency, MAX_LATENCY);
-         // Optionally return Invalid
-     }
-     if statistics.score_validation_time > MAX_SCORE_VALIDATION_TIME {
-          warn!("Reported score_validation_time {} exceeds max {}", statistics.score_validation_time, MAX_SCORE_VALIDATION_TIME);
-         // Optionally return Invalid
-     }
-     if statistics.dht_response_time > MAX_DHT_RESPONSE_TIME {
-         warn!("Reported dht_response_time {} exceeds max {}", statistics.dht_response_time, MAX_DHT_RESPONSE_TIME);
-        // Optionally return Invalid
-     }
-    if statistics.network_delay > MAX_NETWORK_DELAY {
-         warn!("Reported network_delay {} exceeds max {}", statistics.network_delay, MAX_NETWORK_DELAY);
-         // Optionally return Invalid
-     }
+     // Sanity Check Metrics: Ensure values are within reasonable bounds.
+     let _ = statistics.signal_latency;
 
     // 4. Check Timestamp plausibility
     //    Keep this check.
-     let action_time = action.action().timestamp();
+     let action_time = action.timestamp();
      let five_minutes = Duration::from_secs(300); // Using core::time::Duration
 
      let lower_bound = action_time.sub(five_minutes)

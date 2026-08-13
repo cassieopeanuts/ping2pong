@@ -1,14 +1,14 @@
 // ping_2_pong/dnas/ping_2_pong/zomes/integrity/ping_2_pong/src/player_validation.rs
-use hdk::prelude::*;
+use hdi::prelude::*;
 use crate::player::Player;
 
 // Validate creation of a Player entry.
 pub fn validate_create_player(
-    action: &SignedActionHashed,
+    action: &TypedAction<CreateData>,
     player: Player,
 ) -> ExternResult<ValidateCallbackResult> {
     // 1. Check Author: Must match the player_key field.
-    if player.player_key != *action.action().author() {
+    if player.player_key != *action.author() {
         return Ok(ValidateCallbackResult::Invalid(
             "Player profile can only be created by the player themselves (author must match player_key)".to_string(),
         ));
@@ -60,7 +60,6 @@ pub fn validate_update_player(
          }
          // Note: Uniqueness checks for the new name MUST happen in the coordinator zome
          // before calling update_entry. Integrity zome cannot verify uniqueness across DHT.
-         warn!("Player name changed. Uniqueness check relies on coordinator logic and PlayerNameToPlayer link management.");
     }
 
     Ok(ValidateCallbackResult::Valid)

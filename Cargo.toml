@@ -13,8 +13,8 @@ members = ["dnas/*/zomes/coordinator/*", "dnas/*/zomes/integrity/*"]
 resolver = "2"
 
 [workspace.dependencies]
-hdi = "=0.7.1"
-hdk = "=0.6.1"
+hdi = "=0.8.0"
+hdk = "=0.7.0"
 serde = "1.0"
 holochain_serialized_bytes = "=0.0.57"
 getrandom = { version = "0.2", features = ["custom"] }
